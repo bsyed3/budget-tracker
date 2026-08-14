@@ -14,12 +14,13 @@ st.set_page_config(page_title="Budget Tracker", page_icon="💰", layout="wide")
 db.init_db()
 
 CURRENT_MONTH = dt.date.today().strftime("%Y-%m")
+money = components.money
 
 st.title("💰 Budget Tracker")
 page = st.sidebar.radio(
     "Go to",
     [
-        "📸 Snapshot", "📊 Overview", "🔍 Explore", "🎯 Budget", "🏦 Savings",
+        "📸 Snapshot", "📊 Overview", "📅 Breakdown", "🎯 Budget", "🏦 Savings",
         "🧾 Transactions", "➕ Add Transaction", "⚙️ Settings",
     ],
 )
@@ -33,7 +34,7 @@ if page == "📸 Snapshot":
     month_df = df[df["month"] == CURRENT_MONTH] if not df.empty else df
     income = month_df.loc[month_df["type"] == "income", "amount"].sum()
     breakdown = analytics.group_breakdown(month_df, groups)
-    expenses = breakdown["Needs"] + breakdown["Wants"] + breakdown["Donations"]
+    expenses = breakdown["Needs"] + breakdown["Wants"]
     net = income - breakdown.sum()
 
     c1, c2, c3, c4 = st.columns(4)
@@ -63,7 +64,7 @@ if page == "📸 Snapshot":
         st.success("No budgets are near or over their limit this month.")
     else:
         for category, spent, limit, pct in warnings:
-            st.write(f"{components.status_badge(pct)} **{category}** — ${spent:,.2f} / ${limit:,.2f} ({pct:.0%})")
+            st.write(f"{components.status_badge(pct)} **{category}** — {money(spent)} / {money(limit)} ({pct:.0%})")
             components.colored_progress(pct)
 
     st.divider()
@@ -72,9 +73,7 @@ if page == "📸 Snapshot":
     this_week = analytics.weekly_totals(df, weeks=1)
     spent_this_week = float(this_week["amount"].iloc[0]) if not this_week.empty else 0.0
     week_pct = spent_this_week / weekly_goal if weekly_goal > 0 else 0.0
-    st.write(
-        f"{components.status_badge(week_pct)} Spent ${spent_this_week:,.2f} of ${weekly_goal:,.2f} this week"
-    )
+    st.write(f"{components.status_badge(week_pct)} Spent {money(spent_this_week)} of {money(weekly_goal)} this week")
     components.colored_progress(week_pct)
 
     st.divider()
@@ -86,7 +85,7 @@ if page == "📸 Snapshot":
         for g in goals:
             current = analytics.savings_current_amount(g, df)
             pct = min(current / g["goal_amount"], 1.0) if g["goal_amount"] > 0 else 0.0
-            st.write(f"**{g['name']}** — ${current:,.2f} / ${g['goal_amount']:,.2f} ({pct:.0%})")
+            st.write(f"**{g['name']}** — {money(current)} / {money(g['goal_amount'])} ({pct:.0%})")
             st.progress(pct)
 
 # ======================================================================= Overview
@@ -96,12 +95,18 @@ elif page == "📊 Overview":
         st.info("No transactions yet — this page fills in as you log income and expenses.")
     else:
         summary = analytics.monthly_summary(df, groups)
+
         st.subheader("Income vs. expenses over time")
-        st.caption("Expenses here = Needs + Wants + Donations. Savings contributions are excluded (that money isn't spent).")
+        st.caption("Expenses here = Needs + Wants. Savings contributions are excluded (that money isn't spent).")
         st.line_chart(summary[["Total Income", "Expenses"]].rename(columns={"Total Income": "Income"}))
 
+        st.subheader("Expense breakdown (all time)")
+        st.caption("Needs / Wants / Savings share of everything you've logged.")
+        all_time_breakdown = analytics.group_breakdown(df, groups)
+        components.percentage_bar(all_time_breakdown.to_dict())
+
         st.subheader("Monthly summary")
-        display_cols = ["Total Income", "Needs", "Wants", "Savings", "Donations", "Expenses", "Net Income"]
+        display_cols = ["Total Income", "Needs", "Wants", "Savings", "Expenses", "Net Income"]
         st.dataframe(summary[display_cols].T.style.format("${:,.2f}"), use_container_width=True)
 
         st.subheader("Expenses by category")
@@ -116,7 +121,7 @@ elif page == "📊 Overview":
 
         st.divider()
         st.subheader("Weekly breakdown (all time)")
-        st.caption("Discretionary spend only — excludes Savings and Donations.")
+        st.caption("Discretionary spend only — excludes Savings.")
         weekly_goal = float(db.get_setting("weekly_spending_goal", "400"))
         weekly = analytics.weekly_totals(df, all_time=True)
         weekly["Goal"] = weekly_goal
@@ -136,56 +141,80 @@ elif page == "📊 Overview":
             hide_index=True,
         )
 
-# ========================================================================= Explore
-elif page == "🔍 Explore":
-    months = analytics.all_months(df)
-    default_index = months.index(CURRENT_MONTH) if CURRENT_MONTH in months else len(months) - 1
-    selected_month = st.selectbox("Month", months, index=default_index)
-    month_df = df[df["month"] == selected_month] if not df.empty else df
+# ======================================================================= Breakdown
+elif page == "📅 Breakdown":
+    view_mode = st.radio("View by", ["Month", "Year"], horizontal=True)
 
-    f1, f2 = st.columns(2)
-    all_cats = sorted(month_df.loc[month_df["type"] == "expense", "category"].unique()) if not month_df.empty else []
-    cat_filter = f1.multiselect("Category (leave empty for all)", all_cats)
-    group_filter = f2.multiselect("Group (leave empty for all)", db.GROUP_NAMES)
+    if view_mode == "Month":
+        months = analytics.all_months(df)
+        default_index = months.index(CURRENT_MONTH) if CURRENT_MONTH in months else len(months) - 1
+        selected_month = st.selectbox("Month", months, index=default_index)
+        scope_df = df[df["month"] == selected_month] if not df.empty else df
+        period_label = selected_month
+    else:
+        years = sorted({d.year for d in df["date"]}) if not df.empty else [dt.date.today().year]
+        this_year = dt.date.today().year
+        default_year_index = years.index(this_year) if this_year in years else len(years) - 1
+        selected_year = st.selectbox("Year", years, index=default_year_index)
+        scope_df = df[df["date"].dt.year == selected_year] if not df.empty else df
+        period_label = str(selected_year)
 
-    income_total = month_df.loc[month_df["type"] == "income", "amount"].sum()
-    expense_filtered = month_df[month_df["type"] == "expense"]
-    if group_filter:
-        expense_filtered = expense_filtered[expense_filtered["category"].map(groups).isin(group_filter)]
-    if cat_filter:
-        expense_filtered = expense_filtered[expense_filtered["category"].isin(cat_filter)]
+    income_total = scope_df.loc[scope_df["type"] == "income", "amount"].sum()
+    breakdown = analytics.group_breakdown(scope_df, groups)
+    expenses = breakdown["Needs"] + breakdown["Wants"]
 
-    breakdown = analytics.group_breakdown(expense_filtered, groups)
-    expenses = breakdown["Needs"] + breakdown["Wants"] + breakdown["Donations"]
-    has_filter = bool(group_filter) or bool(cat_filter)
-
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3 = st.columns(3)
     c1.metric("Income", f"${income_total:,.2f}")
-    c2.metric("Expenses" + (" (filtered)" if has_filter else ""), f"${expenses:,.2f}")
-    c3.metric("Net" + (" (filtered)" if has_filter else ""), f"${income_total - breakdown.sum():,.2f}")
-    c4.metric("To Savings", f"${breakdown['Savings']:,.2f}")
+    c2.metric("Expenses", f"${expenses:,.2f}")
+    c3.metric("To Savings", f"${breakdown['Savings']:,.2f}")
 
     st.divider()
     left, right = st.columns(2)
     with left:
         st.subheader("Spending by category")
-        if expense_filtered.empty:
-            st.info("No expenses match this filter.")
+        expense_df = scope_df[scope_df["type"] == "expense"]
+        if expense_df.empty:
+            st.info("No expenses this period.")
         else:
-            by_cat = expense_filtered.groupby("category")["amount"].sum().sort_values(ascending=False)
+            by_cat = expense_df.groupby("category")["amount"].sum().sort_values(ascending=False)
             st.bar_chart(by_cat)
     with right:
-        st.subheader("Needs / Wants / Savings / Donations")
-        components.percentage_bar(breakdown.to_dict())
+        st.subheader("Income by category")
+        income_df = scope_df[scope_df["type"] == "income"]
+        if income_df.empty:
+            st.info("No income this period.")
+        else:
+            by_cat_income = income_df.groupby("category")["amount"].sum().sort_values(ascending=False)
+            st.bar_chart(by_cat_income)
 
     st.divider()
-    st.subheader("Transactions in this view")
-    table_df = expense_filtered if has_filter else month_df
-    if table_df.empty:
-        st.info("No transactions match this filter.")
+    st.subheader("Needs / Wants / Savings")
+    components.percentage_bar(breakdown.to_dict())
+
+    if view_mode == "Month":
+        st.divider()
+        st.subheader("This month vs. your 3-month average")
+        st.caption("Where you're spending more or less than your recent trailing average, by category.")
+        expense_df = scope_df[scope_df["type"] == "expense"]
+        if expense_df.empty:
+            st.info("No expenses this period.")
+        else:
+            compare_rows = []
+            for cat in sorted(expense_df["category"].unique()):
+                spent = float(expense_df.loc[expense_df["category"] == cat, "amount"].sum())
+                avg3 = analytics.three_month_avg(df, cat, selected_month)
+                compare_rows.append({"Category": cat, "This month": spent, "3-month avg": avg3})
+            compare_df = pd.DataFrame(compare_rows).set_index("Category")
+            st.bar_chart(compare_df)
+
+    st.divider()
+    st.subheader(f"Transactions — {period_label}")
+    if scope_df.empty:
+        st.info("No transactions in this period.")
     else:
-        display = table_df.copy()
+        display = scope_df.copy()
         display["date"] = display["date"].dt.strftime("%Y-%m-%d")
+        display["type"] = display["type"].str.capitalize()
         st.dataframe(
             display[["date", "type", "category", "description", "amount"]].sort_values("date", ascending=False),
             use_container_width=True,
@@ -194,29 +223,49 @@ elif page == "🔍 Explore":
 
 # =========================================================================== Budget
 elif page == "🎯 Budget":
-    st.subheader("Set a monthly budget")
     expense_cats = db.category_names("expense")
+    budgets = db.get_budgets()
+    existing_budget_cats = {b["category"] for b in budgets}
+
+    @st.dialog("Add a budget")
+    def add_budget_dialog():
+        available = [c for c in expense_cats if c not in existing_budget_cats]
+        if not available:
+            st.info("Every expense category already has a budget.")
+            return
+        category = st.selectbox("Category", available)
+        limit = st.number_input("Monthly limit", min_value=0.0, step=10.0, format="%.2f")
+        if st.button("Save", type="primary"):
+            db.set_budget(category, limit)
+            st.rerun()
+
+    @st.dialog("Edit budget")
+    def edit_budget_dialog(category: str, current_limit: float):
+        st.write(f"**{category}**")
+        limit = st.number_input("Monthly limit", min_value=0.0, step=10.0, value=float(current_limit), format="%.2f")
+        if st.button("Save changes", type="primary"):
+            db.set_budget(category, limit)
+            st.rerun()
+
+    @st.dialog("Remove budget")
+    def delete_budget_dialog(category: str):
+        st.warning(f"Remove the budget for **{category}**?")
+        c1, c2 = st.columns(2)
+        if c1.button("Yes, remove", type="primary"):
+            db.delete_budget(category)
+            st.rerun()
+        if c2.button("Cancel"):
+            st.rerun()
+
+    st.subheader("Budget vs. actual")
     if not expense_cats:
         st.warning("No expense categories yet — add one on the Settings page first.")
-    else:
-        with st.form("set_budget", clear_on_submit=True):
-            c1, c2 = st.columns(2)
-            category = c1.selectbox("Category", expense_cats)
-            limit = c2.number_input("Monthly limit", min_value=0.0, step=10.0, format="%.2f")
-            if st.form_submit_button("Save budget"):
-                db.set_budget(category, limit)
-                st.success(f"Budget set: {category} → ${limit:,.2f}/month")
-                st.rerun()
-
-    st.divider()
-    st.subheader("Budget vs. actual")
     months = analytics.all_months(df)
     default_index = months.index(CURRENT_MONTH) if CURRENT_MONTH in months else len(months) - 1
     selected_month = st.selectbox("Month", months, index=default_index, key="budget_month")
-    budgets = db.get_budgets()
 
     if not budgets:
-        st.info("No budgets set yet — add one above.")
+        st.info("No budgets set yet — add one below.")
     else:
         month_df = df[df["month"] == selected_month] if not df.empty else df
         spent_by_cat = (
@@ -237,14 +286,22 @@ elif page == "🎯 Budget":
         rows.sort(key=lambda r: -r["% Used"])
 
         for row in rows:
-            st.write(
-                f"{components.status_badge(row['% Used'])} **{row['Category']}** — "
-                f"${row['Spent']:,.2f} / ${row['Budget']:,.2f} ({row['% Used']:.0%})  ·  "
-                f"3-mo avg ${row['3-Month Avg']:,.2f}"
-            )
-            components.colored_progress(row["% Used"])
+            rc1, rc2 = st.columns([12, 1])
+            with rc1:
+                st.write(
+                    f"{components.status_badge(row['% Used'])} **{row['Category']}** — "
+                    f"{money(row['Spent'])} / {money(row['Budget'])} ({row['% Used']:.0%})"
+                )
+                components.colored_progress(row["% Used"])
+            with rc2:
+                with st.popover("⋮", key=f"budget_pop_{row['Category']}"):
+                    if st.button("Edit", key=f"budget_edit_{row['Category']}", use_container_width=True):
+                        edit_budget_dialog(row["Category"], row["Budget"])
+                    if st.button("Delete", key=f"budget_del_{row['Category']}", use_container_width=True):
+                        delete_budget_dialog(row["Category"])
 
         st.divider()
+        st.caption("Full detail, including the 3-month trailing average:")
         table = pd.DataFrame(rows).set_index("Category")
         st.dataframe(
             table.style.format(
@@ -254,28 +311,76 @@ elif page == "🎯 Budget":
             use_container_width=True,
         )
 
-        remove_cat = st.selectbox("Remove a budget", [b["category"] for b in budgets])
-        if st.button("Remove budget"):
-            db.delete_budget(remove_cat)
-            st.success("Removed.")
-            st.rerun()
+    st.divider()
+    if st.button("➕ Add budget"):
+        add_budget_dialog()
 
 # ========================================================================== Savings
 elif page == "🏦 Savings":
-    st.subheader("Savings goals")
     goals = db.get_savings_goals()
 
+    @st.dialog("Add a savings goal")
+    def add_goal_dialog():
+        name = st.text_input("Goal name (e.g. Emergency Fund, Travel, Car)")
+        c1, c2, c3 = st.columns(3)
+        goal_amount = c1.number_input("Target amount", min_value=0.0, step=100.0, format="%.2f")
+        monthly_target = c2.number_input("Monthly target", min_value=0.0, step=10.0, format="%.2f")
+        starting_amount = c3.number_input("Starting balance (already saved)", min_value=0.0, step=10.0, format="%.2f")
+        if st.button("Save", type="primary"):
+            if not name.strip():
+                st.error("Please name the goal.")
+            else:
+                db.add_savings_goal(name.strip(), goal_amount, monthly_target, starting_amount, dt.date.today().isoformat())
+                st.rerun()
+
+    @st.dialog("Edit savings goal")
+    def edit_goal_dialog(goal):
+        st.write(f"**{goal['name']}**")
+        c1, c2, c3 = st.columns(3)
+        goal_amount = c1.number_input("Target amount", min_value=0.0, step=100.0, value=float(goal["goal_amount"]), format="%.2f")
+        monthly_target = c2.number_input("Monthly target", min_value=0.0, step=10.0, value=float(goal["monthly_target"]), format="%.2f")
+        starting_amount = c3.number_input("Starting balance", min_value=0.0, step=10.0, value=float(goal["starting_amount"]), format="%.2f")
+        if st.button("Save changes", type="primary"):
+            db.update_savings_goal(goal["id"], goal_amount, monthly_target, starting_amount)
+            st.rerun()
+
+    @st.dialog("Delete savings goal")
+    def delete_goal_dialog(goal):
+        st.warning(
+            f"Delete **{goal['name']}**? This can't be undone. Past contributions logged to it "
+            "keep their category but lose the goal link."
+        )
+        c1, c2 = st.columns(2)
+        if c1.button("Yes, delete", type="primary"):
+            db.delete_savings_goal(goal["id"])
+            st.rerun()
+        if c2.button("Cancel"):
+            st.rerun()
+
+    st.subheader("Savings goals")
     if not goals:
         st.info("No savings goals yet — add one below.")
     else:
         for g in goals:
             current = analytics.savings_current_amount(g, df)
             pct = min(current / g["goal_amount"], 1.0) if g["goal_amount"] > 0 else 0.0
-            st.markdown(f"**{g['name']}** — ${current:,.2f} / ${g['goal_amount']:,.2f}  ({pct:.0%})")
-            st.progress(pct)
-            st.caption(f"Monthly target: ${g['monthly_target']:,.2f}")
+            rc1, rc2 = st.columns([12, 1])
+            with rc1:
+                st.markdown(f"**{g['name']}** — {money(current)} / {money(g['goal_amount'])}  ({pct:.0%})")
+                st.progress(pct)
+                st.caption(f"Monthly target: {money(g['monthly_target'])}")
+            with rc2:
+                with st.popover("⋮", key=f"goal_pop_{g['id']}"):
+                    if st.button("Edit", key=f"goal_edit_{g['id']}", use_container_width=True):
+                        edit_goal_dialog(g)
+                    if st.button("Delete", key=f"goal_del_{g['id']}", use_container_width=True):
+                        delete_goal_dialog(g)
         st.divider()
 
+    if st.button("➕ Add goal"):
+        add_goal_dialog()
+
+    st.divider()
     st.subheader("Add a contribution")
     savings_categories = [c for c, g in groups.items() if g == "Savings"]
     if goals and savings_categories:
@@ -295,47 +400,83 @@ elif page == "🏦 Savings":
                     db.add_transaction(
                         date.isoformat(), "expense", category, description or goal_name, amount, goal_id,
                     )
-                    st.success(f"Added ${amount:,.2f} to {goal_name}")
+                    st.success(f"Added {money(amount)} to {goal_name}")
                     st.rerun()
     elif not savings_categories:
         st.caption("No 'Savings' group category exists yet — add or assign one on the Settings page.")
     else:
         st.caption("Add a goal first to log contributions toward it.")
 
-    st.divider()
-    st.subheader("Add / edit a goal")
-    with st.form("add_goal", clear_on_submit=True):
-        name = st.text_input("Goal name (e.g. Emergency Fund, Travel, Car)")
-        c1, c2, c3 = st.columns(3)
-        goal_amount = c1.number_input("Target amount", min_value=0.0, step=100.0, format="%.2f")
-        monthly_target = c2.number_input("Monthly contribution target", min_value=0.0, step=10.0, format="%.2f")
-        starting_amount = c3.number_input("Starting balance (already saved)", min_value=0.0, step=10.0, format="%.2f")
-        if st.form_submit_button("Save goal"):
-            if not name.strip():
-                st.error("Please name the goal.")
-            else:
-                existing = {g["name"]: g["id"] for g in goals}
-                if name in existing:
-                    db.update_savings_goal(existing[name], goal_amount, monthly_target, starting_amount)
-                else:
-                    db.add_savings_goal(name.strip(), goal_amount, monthly_target, starting_amount, dt.date.today().isoformat())
-                st.success(f"Saved goal: {name}")
-                st.rerun()
-
-    if goals:
-        st.divider()
-        remove_goal = st.selectbox("Remove a goal", [g["name"] for g in goals])
-        if st.button("Remove goal", type="primary"):
-            goal_id = next(g["id"] for g in goals if g["name"] == remove_goal)
-            db.delete_savings_goal(goal_id)
-            st.success("Removed.")
-            st.rerun()
-
 # ===================================================================== Transactions
 elif page == "🧾 Transactions":
     st.subheader("All transactions")
+
+    @st.dialog("Add a transaction")
+    def add_transaction_dialog():
+        type_ = st.radio("Type", ["expense", "income"], horizontal=True, format_func=str.capitalize, key="dlg_add_type")
+        cats = db.category_names(type_)
+        if not cats:
+            st.warning(f"No {type_} categories yet — add one on the Settings page first.")
+            return
+        c1, c2 = st.columns(2)
+        date = c1.date_input("Date", value=dt.date.today(), key="dlg_add_date")
+        category = c2.selectbox("Category", cats, key="dlg_add_cat")
+        goal_id = None
+        if type_ == "expense" and groups.get(category) == "Savings":
+            dlg_goals = db.get_savings_goals()
+            if dlg_goals:
+                choice = st.selectbox("Savings goal (optional)", ["None"] + [g["name"] for g in dlg_goals], key="dlg_add_goal")
+                if choice != "None":
+                    goal_id = next(g["id"] for g in dlg_goals if g["name"] == choice)
+        description = st.text_input("Description (optional)", key="dlg_add_desc")
+        amount = st.number_input("Amount", min_value=0.0, step=1.0, format="%.2f", key="dlg_add_amt")
+        if st.button("Add", type="primary", key="dlg_add_submit"):
+            if amount <= 0:
+                st.error("Amount must be greater than zero.")
+            else:
+                db.add_transaction(date.isoformat(), type_, category, description, amount, goal_id)
+                st.rerun()
+
+    @st.dialog("Edit transaction")
+    def edit_transaction_dialog(txn):
+        tid = int(txn["id"])
+        type_ = st.radio(
+            "Type", ["expense", "income"], horizontal=True, format_func=str.capitalize,
+            index=0 if txn["type"] == "expense" else 1, key=f"dlg_edit_type_{tid}",
+        )
+        cats = db.category_names(type_)
+        default_idx = cats.index(txn["category"]) if txn["category"] in cats else 0
+        c1, c2 = st.columns(2)
+        date = c1.date_input("Date", value=txn["date"].date(), key=f"dlg_edit_date_{tid}")
+        category = c2.selectbox("Category", cats, index=default_idx if cats else 0, key=f"dlg_edit_cat_{tid}")
+        description = st.text_input("Description", value=txn["description"] or "", key=f"dlg_edit_desc_{tid}")
+        amount = st.number_input(
+            "Amount", min_value=0.0, step=1.0, value=float(txn["amount"]), format="%.2f", key=f"dlg_edit_amt_{tid}"
+        )
+        if st.button("Save changes", type="primary", key=f"dlg_edit_submit_{tid}"):
+            if amount <= 0:
+                st.error("Amount must be greater than zero.")
+            else:
+                goal_id = txn["goal_id"] if category == txn["category"] else None
+                db.update_transaction(tid, date.isoformat(), type_, category, description, amount, goal_id)
+                st.rerun()
+
+    @st.dialog("Delete transaction")
+    def delete_transaction_dialog(txn):
+        tid = int(txn["id"])
+        st.warning(
+            f"Delete transaction #{tid}: {txn['category']} — {money(txn['amount'])} "
+            f"on {txn['date'].strftime('%Y-%m-%d')}? This can't be undone."
+        )
+        c1, c2 = st.columns(2)
+        if c1.button("Yes, delete", type="primary", key=f"dlg_del_confirm_{tid}"):
+            db.delete_transaction(tid)
+            st.rerun()
+        if c2.button("Cancel", key=f"dlg_del_cancel_{tid}"):
+            st.rerun()
+
     if df.empty:
-        st.info("No transactions yet. Add one from the 'Add Transaction' page.")
+        st.info("No transactions yet.")
     else:
         f1, f2, f3 = st.columns([1, 1.4, 1.6])
         type_choice = f1.radio("Type", ["All", "Income", "Expense"], horizontal=True)
@@ -345,7 +486,7 @@ elif page == "🧾 Transactions":
 
         f4, f5 = st.columns(2)
         cat_filter = f4.multiselect("Category (leave empty = all)", sorted(df["category"].unique()))
-        group_filter = f5.multiselect("Group (leave empty = all, expenses only)", db.GROUP_NAMES)
+        group_filter = f5.multiselect("Group (leave empty = all)", db.GROUP_NAMES + ["Income"])
 
         filtered = df.copy()
         if type_choice != "All":
@@ -362,32 +503,21 @@ elif page == "🧾 Transactions":
         if cat_filter:
             filtered = filtered[filtered["category"].isin(cat_filter)]
         if group_filter:
-            filtered = filtered[(filtered["type"] == "expense") & (filtered["category"].map(groups).isin(group_filter))]
+            expense_groups_selected = [g for g in group_filter if g in db.GROUP_NAMES]
+            include_income = "Income" in group_filter
+            mask = pd.Series(False, index=filtered.index)
+            if expense_groups_selected:
+                mask |= (filtered["type"] == "expense") & (filtered["category"].map(groups).isin(expense_groups_selected))
+            if include_income:
+                mask |= filtered["type"] == "income"
+            filtered = filtered[mask]
 
         filtered = filtered.sort_values(["date", "id"], ascending=[False, False])
-        st.caption(f"{len(filtered)} transaction(s) — total ${filtered['amount'].sum():,.2f}")
-
-        # Pending-delete confirmation, shown above the table so it's never missed.
-        pending_id = st.session_state.get("pending_delete_id")
-        if pending_id is not None:
-            match = df[df["id"] == pending_id]
-            if not match.empty:
-                r = match.iloc[0]
-                st.warning(
-                    f"Delete transaction #{pending_id}: {r['category']} — ${r['amount']:,.2f} "
-                    f"on {r['date'].strftime('%Y-%m-%d')}? This can't be undone."
-                )
-                cc1, cc2 = st.columns([1, 4])
-                if cc1.button("Yes, delete", type="primary"):
-                    db.delete_transaction(int(pending_id))
-                    st.session_state.pending_delete_id = None
-                    st.success("Deleted.")
-                    st.rerun()
-                if cc2.button("Cancel"):
-                    st.session_state.pending_delete_id = None
-                    st.rerun()
-            else:
-                st.session_state.pending_delete_id = None
+        income_total = filtered.loc[filtered["type"] == "income", "amount"].sum()
+        expense_total = filtered.loc[filtered["type"] == "expense", "amount"].sum()
+        st.caption(
+            f"{len(filtered)} transaction(s) — Income: {money(income_total)} · Expenses: {money(expense_total)}"
+        )
 
         PAGE_SIZE = 20
         total_pages = max(1, -(-len(filtered) // PAGE_SIZE))
@@ -409,26 +539,33 @@ elif page == "🧾 Transactions":
         start_i = (st.session_state.txn_page - 1) * PAGE_SIZE
         page_df = filtered.iloc[start_i : start_i + PAGE_SIZE]
 
-        header = st.columns([0.6, 1, 0.8, 1.3, 2, 1, 0.6])
+        header = st.columns([0.6, 1, 0.8, 1.3, 2, 1, 0.5])
         for col, label in zip(header, ["ID", "Date", "Type", "Category", "Description", "Amount", ""]):
             col.markdown(f"**{label}**")
 
         for _, row in page_df.iterrows():
-            c = st.columns([0.6, 1, 0.8, 1.3, 2, 1, 0.6])
+            c = st.columns([0.6, 1, 0.8, 1.3, 2, 1, 0.5])
             c[0].write(str(row["id"]))
             c[1].write(row["date"].strftime("%Y-%m-%d"))
-            c[2].write(row["type"])
+            c[2].write(row["type"].capitalize())
             c[3].write(row["category"])
             c[4].write(row["description"] or "")
-            c[5].write(f"${row['amount']:,.2f}")
-            if c[6].button("🗑️", key=f"del_{row['id']}"):
-                st.session_state.pending_delete_id = int(row["id"])
-                st.rerun()
+            c[5].write(money(row["amount"]))
+            with c[6]:
+                with st.popover("⋮", key=f"txn_pop_{row['id']}"):
+                    if st.button("Edit", key=f"txn_edit_{row['id']}", use_container_width=True):
+                        edit_transaction_dialog(row)
+                    if st.button("Delete", key=f"txn_del_{row['id']}", use_container_width=True):
+                        delete_transaction_dialog(row)
+
+    st.divider()
+    if st.button("➕ Add transaction"):
+        add_transaction_dialog()
 
 # ================================================================ Add Transaction
 elif page == "➕ Add Transaction":
     st.subheader("Add a transaction")
-    type_ = st.radio("Type", ["expense", "income"], horizontal=True)
+    type_ = st.radio("Type", ["expense", "income"], horizontal=True, format_func=str.capitalize)
     category_options = db.category_names(type_)
 
     if not category_options:
@@ -441,14 +578,14 @@ elif page == "➕ Add Transaction":
 
             goal_id = None
             if type_ == "expense" and groups.get(category) == "Savings":
-                goals = db.get_savings_goals()
-                if goals:
+                sgoals = db.get_savings_goals()
+                if sgoals:
                     goal_choice = st.selectbox(
                         "Contributing to which savings goal? (optional)",
-                        ["None"] + [g["name"] for g in goals],
+                        ["None"] + [g["name"] for g in sgoals],
                     )
                     if goal_choice != "None":
-                        goal_id = next(g["id"] for g in goals if g["name"] == goal_choice)
+                        goal_id = next(g["id"] for g in sgoals if g["name"] == goal_choice)
                 else:
                     st.caption("No savings goals set up yet — add one on the Savings page to link contributions.")
 
@@ -461,69 +598,86 @@ elif page == "➕ Add Transaction":
                     st.error("Amount must be greater than zero.")
                 else:
                     db.add_transaction(date.isoformat(), type_, category, description, amount, goal_id)
-                    st.success(f"Added {type_}: ${amount:,.2f} ({category})")
+                    st.success(f"Added {type_.capitalize()}: {money(amount)} ({category})")
                     st.rerun()
 
 # ========================================================================= Settings
 elif page == "⚙️ Settings":
-    st.subheader("Categories")
-    st.caption(
-        "These populate the Add Transaction dropdowns. Removing a category doesn't change past "
-        "transactions — they keep their original category text."
-    )
     cats = db.get_categories()
-    if cats:
-        table = pd.DataFrame([dict(c) for c in cats])
-        table["group_name"] = table["group_name"].fillna("—")
-        st.dataframe(
-            table.rename(columns={"name": "Category", "type": "Type", "group_name": "Group"}),
-            use_container_width=True, hide_index=True,
-        )
 
-    st.markdown("#### Add a category")
-    with st.form("add_category", clear_on_submit=True):
+    @st.dialog("Add a category")
+    def add_category_dialog():
         name = st.text_input("Category name")
         c1, c2 = st.columns(2)
-        new_type = c1.selectbox("Type", ["expense", "income"])
+        new_type = c1.selectbox("Type", ["expense", "income"], format_func=str.capitalize)
         new_group = c2.selectbox("Group (expense only)", db.GROUP_NAMES)
-        if st.form_submit_button("Add category"):
-            existing_names = {c["name"] for c in cats}
+        if st.button("Add", type="primary"):
+            existing_names = {c["name"] for c in db.get_categories()}
             if not name.strip():
                 st.error("Please name the category.")
             elif name.strip() in existing_names:
                 st.error("That category already exists.")
             else:
                 db.add_category(name.strip(), new_type, new_group if new_type == "expense" else None)
-                st.success(f"Added category: {name.strip()}")
                 st.rerun()
 
-    expense_cats = [c for c in cats if c["type"] == "expense"]
-    if expense_cats:
-        st.markdown("#### Edit a category's group")
-        c1, c2 = st.columns(2)
-        edit_cat = c1.selectbox("Category", [c["name"] for c in expense_cats], key="edit_cat_select")
-        current_group = next(c["group_name"] for c in expense_cats if c["name"] == edit_cat) or "Wants"
-        new_group_val = c2.selectbox(
-            "Group", db.GROUP_NAMES,
-            index=db.GROUP_NAMES.index(current_group) if current_group in db.GROUP_NAMES else 0,
-            key="edit_cat_group",
+    @st.dialog("Edit category")
+    def edit_category_dialog(cat):
+        st.write(f"**{cat['name']}** ({cat['type'].capitalize()})")
+        if cat["type"] == "expense":
+            current = cat["group_name"] or "Wants"
+            new_group = st.selectbox(
+                "Group", db.GROUP_NAMES, index=db.GROUP_NAMES.index(current) if current in db.GROUP_NAMES else 0
+            )
+            if st.button("Save changes", type="primary"):
+                db.update_category_group(cat["name"], new_group)
+                st.rerun()
+        else:
+            st.caption("Income categories don't have a group.")
+
+    @st.dialog("Remove category")
+    def delete_category_dialog(cat):
+        st.warning(
+            f"Remove **{cat['name']}**? Past transactions keep their category text — this only "
+            "removes it from the Add Transaction dropdown."
         )
-        if st.button("Update group"):
-            db.update_category_group(edit_cat, new_group_val)
-            st.success("Updated.")
+        c1, c2 = st.columns(2)
+        if c1.button("Yes, remove", type="primary"):
+            db.delete_category(cat["name"])
+            st.rerun()
+        if c2.button("Cancel"):
             st.rerun()
 
-    if cats:
-        st.markdown("#### Remove a category")
-        remove_name = st.selectbox("Category to remove", [c["name"] for c in cats], key="remove_cat_select")
-        if st.button("Remove category", type="primary"):
-            db.delete_category(remove_name)
-            st.success("Removed.")
-            st.rerun()
+    st.subheader("Categories")
+    st.caption(
+        "These populate the Add Transaction dropdowns. Removing a category doesn't change past "
+        "transactions — they keep their original category text."
+    )
+    if not cats:
+        st.info("No categories yet — add one below.")
+    else:
+        header = st.columns([2.5, 1, 1.5, 0.6])
+        for col, label in zip(header, ["Category", "Type", "Group", ""]):
+            col.markdown(f"**{label}**")
+        for cat in cats:
+            c = st.columns([2.5, 1, 1.5, 0.6])
+            c[0].write(cat["name"])
+            c[1].write(cat["type"].capitalize())
+            c[2].write(cat["group_name"] or "—")
+            with c[3]:
+                with st.popover("⋮", key=f"cat_pop_{cat['name']}"):
+                    if st.button("Edit", key=f"cat_edit_{cat['name']}", use_container_width=True):
+                        edit_category_dialog(cat)
+                    if st.button("Delete", key=f"cat_del_{cat['name']}", use_container_width=True):
+                        delete_category_dialog(cat)
+
+    st.divider()
+    if st.button("➕ Add category"):
+        add_category_dialog()
 
     st.divider()
     st.subheader("Weekly spending goal")
-    st.caption("Used on the Snapshot, Overview, and Explore pages. Excludes Savings and Donations categories.")
+    st.caption("Used on the Snapshot and Overview pages. Excludes Savings.")
     current_goal = float(db.get_setting("weekly_spending_goal", "400"))
     new_goal = st.number_input("Weekly goal", min_value=0.0, step=10.0, value=current_goal, format="%.2f")
     if st.button("Save weekly goal"):

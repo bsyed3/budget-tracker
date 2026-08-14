@@ -7,12 +7,11 @@ from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "data" / "budget.db"
 
-GROUP_NAMES = ["Needs", "Wants", "Savings", "Donations"]
+GROUP_NAMES = ["Needs", "Wants", "Savings"]
 GROUP_COLORS = {
     "Needs": "#2563eb",      # blue
     "Wants": "#f59e0b",      # amber
     "Savings": "#16a34a",    # green
-    "Donations": "#9333ea",  # purple
 }
 
 # Seed data used only the first time the database is created (or to backfill any
@@ -20,10 +19,11 @@ GROUP_COLORS = {
 _SEED_EXPENSE_GROUPS = {
     "Cell Phone": "Needs", "Internet": "Needs", "Loans": "Needs", "Insurance": "Needs",
     "Gas": "Needs", "Presto": "Needs", "Groceries": "Needs", "Miscellaneous": "Needs",
+    "Donations": "Needs",
     "Uber": "Wants", "Eating Out": "Wants", "Tims/Coffee": "Wants", "Subscriptions": "Wants",
     "Dates": "Wants", "Activities": "Wants", "Gym/Fitness": "Wants",
     "Clothing/Personal Care": "Wants", "Travel": "Wants", "Gifts": "Wants",
-    "Savings/Investments": "Savings", "Donations": "Donations",
+    "Savings/Investments": "Savings",
 }
 _SEED_INCOME_CATEGORIES = ["Salary", "Side Income", "Government", "Other Income"]
 
@@ -89,6 +89,10 @@ def init_db() -> None:
             )
             """
         )
+        # Donations was folded into Needs; migrate any leftover rows from the old 4-group
+        # scheme (harmless no-op if none exist). Left in the CHECK constraint above for
+        # compatibility with tables created before this change.
+        conn.execute("UPDATE categories SET group_name = 'Needs' WHERE group_name = 'Donations'")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS settings (
@@ -164,6 +168,18 @@ def add_transaction(
             (date, type_, category, description, amount, goal_id),
         )
         return cur.lastrowid
+
+
+def update_transaction(
+    transaction_id: int, date: str, type_: str, category: str, description: str,
+    amount: float, goal_id: int | None,
+) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE transactions SET date = ?, type = ?, category = ?, description = ?, "
+            "amount = ?, goal_id = ? WHERE id = ?",
+            (date, type_, category, description, amount, goal_id, transaction_id),
+        )
 
 
 def delete_transaction(transaction_id: int) -> None:

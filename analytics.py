@@ -37,12 +37,12 @@ def category_month_pivot(df: pd.DataFrame, type_: str) -> pd.DataFrame:
 
 
 def monthly_summary(df: pd.DataFrame, groups: dict[str, str]) -> pd.DataFrame:
-    """One row per month: Total Income, Needs, Wants, Savings, Donations, Expenses, Net Income.
+    """One row per month: Total Income, Needs, Wants, Savings, Expenses, Net Income.
 
-    "Expenses" is Needs + Wants + Donations only — money moved into Savings isn't spent,
-    so it's excluded from the income-vs-expenses comparison (Net Income still accounts for it).
+    "Expenses" is Needs + Wants only — money moved into Savings isn't spent, so it's
+    excluded from the income-vs-expenses comparison (Net Income still accounts for it).
     """
-    cols = ["Total Income", "Needs", "Wants", "Savings", "Donations", "Expenses", "Net Income"]
+    cols = ["Total Income", "Needs", "Wants", "Savings", "Expenses", "Net Income"]
     if df.empty:
         return pd.DataFrame(columns=cols)
     work = df.copy()
@@ -59,8 +59,8 @@ def monthly_summary(df: pd.DataFrame, groups: dict[str, str]) -> pd.DataFrame:
     out["Total Income"] = income.reindex(out.index, fill_value=0.0)
     for g in db.GROUP_NAMES:
         out[g] = expense_by_group[g].reindex(out.index, fill_value=0.0)
-    out["Expenses"] = out["Needs"] + out["Wants"] + out["Donations"]
-    out["Net Income"] = out["Total Income"] - out["Needs"] - out["Wants"] - out["Savings"] - out["Donations"]
+    out["Expenses"] = out["Needs"] + out["Wants"]
+    out["Net Income"] = out["Total Income"] - out["Needs"] - out["Wants"] - out["Savings"]
     return out.sort_index()
 
 
@@ -86,14 +86,14 @@ def three_month_avg(df: pd.DataFrame, category: str, month: str) -> float:
 
 
 def weekly_totals(df: pd.DataFrame, weeks: int | None = 12, all_time: bool = False) -> pd.DataFrame:
-    """Weekly (Mon-Sun) discretionary spend, excluding Savings and Donations.
+    """Weekly (Mon-Sun) discretionary spend, excluding Savings contributions.
 
     Pass `weeks` for a rolling recent window, or `all_time=True` to cover every week from the
     first transaction through the current week.
     """
     today = dt.date.today()
     this_monday = today - dt.timedelta(days=today.weekday())
-    excluded_groups = {"Savings", "Donations"}
+    excluded_groups = {"Savings"}
     groups = db.get_category_groups()
 
     if all_time and not df.empty:
