@@ -275,6 +275,33 @@ def update_category_group(name: str, group_name: str) -> None:
         conn.execute("UPDATE categories SET group_name = ? WHERE name = ?", (group_name, name))
 
 
+def update_category(old_name: str, new_name: str, type_: str, group_name: str | None) -> None:
+    """Rename and/or change a category's type/group, cascading to every place its name or type
+    is referenced (transactions, budgets, recurring rules) so historical data stays consistent."""
+    with get_conn() as conn:
+        old_row = conn.execute("SELECT type FROM categories WHERE name = ?", (old_name,)).fetchone()
+        old_type = old_row["type"] if old_row else type_
+
+        current_name = old_name
+        if new_name != old_name:
+            conn.execute("UPDATE categories SET name = ? WHERE name = ?", (new_name, old_name))
+            conn.execute("UPDATE transactions SET category = ? WHERE category = ?", (new_name, old_name))
+            conn.execute("UPDATE budgets SET category = ? WHERE category = ?", (new_name, old_name))
+            conn.execute("UPDATE recurring_transactions SET category = ? WHERE category = ?", (new_name, old_name))
+            current_name = new_name
+
+        conn.execute(
+            "UPDATE categories SET type = ?, group_name = ? WHERE name = ?",
+            (type_, group_name, current_name),
+        )
+        if type_ != old_type:
+            conn.execute("UPDATE transactions SET type = ? WHERE category = ?", (type_, current_name))
+            conn.execute("UPDATE recurring_transactions SET type = ? WHERE category = ?", (type_, current_name))
+            if type_ == "income":
+                # Budgets only make sense for expense categories.
+                conn.execute("DELETE FROM budgets WHERE category = ?", (current_name,))
+
+
 def delete_category(name: str) -> None:
     with get_conn() as conn:
         conn.execute("DELETE FROM categories WHERE name = ?", (name,))

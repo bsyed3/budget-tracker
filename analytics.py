@@ -91,10 +91,31 @@ def group_breakdown_by_month(df: pd.DataFrame, groups: dict[str, str]) -> pd.Dat
     return out
 
 
-def three_month_avg(df: pd.DataFrame, category: str, month: str) -> float:
-    """Average expense for `category` over the 3 calendar months preceding `month`."""
+def first_transaction_month(df: pd.DataFrame) -> str | None:
+    """The earliest month with any data at all, or None if there's no data yet."""
+    if df.empty:
+        return None
+    return df["date"].min().strftime("%Y-%m")
+
+
+def prior_months_available(month: str, first_month: str) -> list[str]:
+    """Up to the 3 calendar months immediately before `month`, chronological, excluding any
+    that fall before `first_month` (since there's no real data to average there)."""
     target = pd.Period(month, freq="M")
-    prior_months = [(target - i).strftime("%Y-%m") for i in (1, 2, 3)]
+    first_period = pd.Period(first_month, freq="M")
+    candidates = [target - i for i in (3, 2, 1)]
+    return [c.strftime("%Y-%m") for c in candidates if c >= first_period]
+
+
+def three_month_avg(df: pd.DataFrame, category: str, month: str, first_month: str | None = None) -> float:
+    """Average expense for `category` over however many of the 3 preceding months actually have
+    data (1 month right after your first month, 2 the month after that, 3 from then on)."""
+    first_month = first_month or first_transaction_month(df)
+    if first_month is None:
+        return 0.0
+    prior_months = prior_months_available(month, first_month)
+    if not prior_months:
+        return 0.0
     subset = df[
         (df["type"] == "expense") & (df["category"] == category) & (df["month"].isin(prior_months))
     ]
@@ -103,15 +124,17 @@ def three_month_avg(df: pd.DataFrame, category: str, month: str) -> float:
     return subset.groupby("month")["amount"].sum().reindex(prior_months, fill_value=0.0).mean()
 
 
-def weekly_totals(df: pd.DataFrame, weeks: int | None = 12, all_time: bool = False) -> pd.DataFrame:
-    """Weekly (Mon-Sun) discretionary spend, excluding Savings contributions.
+def weekly_totals(
+    df: pd.DataFrame, weeks: int | None = 12, all_time: bool = False, scope: str = "total"
+) -> pd.DataFrame:
+    """Weekly (Mon-Sun) spend, excluding Savings contributions.
 
+    `scope`: "wants" (Wants-group only), "needs" (Needs-group only), or "total" (Needs + Wants).
     Pass `weeks` for a rolling recent window, or `all_time=True` to cover every week from the
     first transaction through the current week.
     """
     today = dt.date.today()
     this_monday = today - dt.timedelta(days=today.weekday())
-    excluded_groups = {"Savings"}
     groups = db.get_category_groups()
 
     if all_time and not df.empty:
@@ -126,7 +149,13 @@ def weekly_totals(df: pd.DataFrame, weeks: int | None = 12, all_time: bool = Fal
     spend = df.copy()
     if not spend.empty:
         spend["group"] = spend["category"].map(groups).fillna("Wants")
-        spend = spend[(spend["type"] == "expense") & (~spend["group"].isin(excluded_groups))]
+        spend = spend[spend["type"] == "expense"]
+        if scope == "wants":
+            spend = spend[spend["group"] == "Wants"]
+        elif scope == "needs":
+            spend = spend[spend["group"] == "Needs"]
+        else:
+            spend = spend[spend["group"] != "Savings"]
 
     rows = []
     for start in week_starts:
