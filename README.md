@@ -84,6 +84,15 @@ python migrate_to_turso.py
 4. In the app's Settings → Sharing, restrict viewers to just your own email so it isn't publicly
    browsable
 
+## Installing on iPhone
+
+Once deployed, open the app's URL in **Safari** on your iPhone and use **Share → Add to Home
+Screen**. `pwa.py` injects the iOS-specific tags (`apple-mobile-web-app-capable`, a custom app
+icon and name, theme color) that make the resulting home screen icon launch full-screen with no
+Safari address bar — the closest thing to a native app without going through Xcode/App Store
+distribution (which needs a Mac + Apple Developer account and isn't something this project sets
+up).
+
 ## Importing historical data
 
 To import transactions, income, savings goals, and budgets from an old Excel budget workbook

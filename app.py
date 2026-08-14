@@ -10,10 +10,12 @@ import analytics
 import charts
 import components
 import db
+import pwa
 import recurring
 
 st.set_page_config(page_title="Budget Tracker", page_icon="💰", layout="wide")
 db.init_db()
+pwa.inject()  # iOS "Add to Home Screen" -> full-screen app icon/name instead of a Safari tab
 
 # Auto-generate any recurring transactions that have come due (checked on every load; cheap
 # and idempotent — backfills every missed occurrence, not just one, if it's been a while).
