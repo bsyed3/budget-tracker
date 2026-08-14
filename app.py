@@ -16,6 +16,7 @@ import recurring
 st.set_page_config(page_title="Budget Tracker", page_icon="💰", layout="wide")
 db.init_db()
 pwa.inject()  # iOS "Add to Home Screen" -> full-screen app icon/name instead of a Safari tab
+pwa.inject_number_input_ux()  # tapping a number field selects its value instead of appending
 
 # Auto-generate any recurring transactions that have come due (checked on every load; cheap
 # and idempotent — backfills every missed occurrence, not just one, if it's been a while).
@@ -31,11 +32,27 @@ fmt_month = analytics.format_month
 # Row "⋮" edit/delete menus only reveal themselves when hovering the row they belong to.
 # Every hoverable row is wrapped in st.container(key=f"hoverrow_..."), which Streamlit renders
 # with a stable "st-key-hoverrow_..." class on the wrapping div — this CSS targets that.
+# Table header rows use the same treatment (minus the popover) via "st-key-tablehead_...".
 st.markdown(
     """
     <style>
     div[class*="st-key-hoverrow_"] div[data-testid="stPopover"] { visibility: hidden; }
     div[class*="st-key-hoverrow_"]:hover div[data-testid="stPopover"] { visibility: visible; }
+    /* Touch devices have no hover state, so the menu would otherwise never appear. */
+    @media (hover: none) {
+        div[class*="st-key-hoverrow_"] div[data-testid="stPopover"] { visibility: visible; }
+    }
+    /* Keep these table-like rows side-by-side in columns instead of Streamlit's default of
+       stacking them vertically on narrow screens; scroll horizontally if a row is too tight. */
+    div[class*="st-key-hoverrow_"] div[data-testid="stHorizontalBlock"],
+    div[class*="st-key-tablehead_"] div[data-testid="stHorizontalBlock"] {
+        flex-wrap: nowrap !important;
+        overflow-x: auto !important;
+    }
+    div[class*="st-key-hoverrow_"] div[data-testid="stColumn"],
+    div[class*="st-key-tablehead_"] div[data-testid="stColumn"] {
+        min-width: fit-content !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -92,12 +109,15 @@ if page == "Snapshot":
         st.success("No budgets are near or over their limit this month.")
     else:
         for category, spent, limit, pct in warnings:
-            wc1, wc2 = st.columns([1, 6])
+            wc1, wc2, wc3 = st.columns([0.9, 2.5, 3])
             with wc1:
                 st.markdown(components.status_pill(pct), unsafe_allow_html=True)
             with wc2:
-                st.write(f"**{category}** — {money(spent)} / {money(limit)} ({pct:.0%})")
+                st.markdown(f"**{category}**")
+            with wc3:
+                st.markdown(f"{money(spent)} / {money(limit)}  ({pct:.0%})")
             components.colored_progress(pct)
+            st.write("")
 
     st.divider()
     st.subheader("This Week")
@@ -105,11 +125,13 @@ if page == "Snapshot":
     this_week = analytics.weekly_totals(df, weeks=1)
     spent_this_week = float(this_week["amount"].iloc[0]) if not this_week.empty else 0.0
     week_pct = spent_this_week / weekly_goal if weekly_goal > 0 else 0.0
-    wk1, wk2 = st.columns([1, 6])
+    wk1, wk2, wk3 = st.columns([0.9, 2.5, 3])
     with wk1:
         st.markdown(components.status_pill(week_pct), unsafe_allow_html=True)
     with wk2:
-        st.write(f"Spent {money(spent_this_week)} of {money(weekly_goal)} this week")
+        st.markdown("**This week**")
+    with wk3:
+        st.markdown(f"{money(spent_this_week)} / {money(weekly_goal)}  ({week_pct:.0%})")
     components.colored_progress(week_pct)
 
     st.divider()
@@ -121,8 +143,13 @@ if page == "Snapshot":
         for g in goals:
             current = analytics.savings_current_amount(g, df)
             pct = min(current / g["goal_amount"], 1.0) if g["goal_amount"] > 0 else 0.0
-            st.write(f"**{g['name']}** — {money(current)} / {money(g['goal_amount'])} ({pct:.0%})")
+            sc1, sc2 = st.columns([2.5, 3])
+            with sc1:
+                st.markdown(f"**{g['name']}**")
+            with sc2:
+                st.markdown(f"{money(current)} / {money(g['goal_amount'])}  ({pct:.0%})")
             st.progress(pct)
+            st.write("")
 
 # ======================================================================= Overview
 elif page == "Overview":
@@ -660,9 +687,10 @@ elif page == "Transactions":
         start_i = (st.session_state.txn_page - 1) * PAGE_SIZE
         page_df = filtered.iloc[start_i : start_i + PAGE_SIZE]
 
-        header = st.columns([0.6, 1, 0.8, 1.3, 2, 1, 0.5])
-        for col, label in zip(header, ["ID", "Date", "Type", "Category", "Description", "Amount", ""]):
-            col.markdown(f"**{label}**")
+        with st.container(key="tablehead_txn"):
+            header = st.columns([0.6, 1, 0.8, 1.3, 2, 1, 0.5])
+            for col, label in zip(header, ["ID", "Date", "Type", "Category", "Description", "Amount", ""]):
+                col.markdown(f"**{label}**")
 
         for i, (_, row) in enumerate(page_df.iterrows()):
             with st.container(key=f"hoverrow_txn_{i}"):
@@ -765,9 +793,10 @@ elif page == "Recurring Transactions":
     if not rules:
         st.info("No recurring transactions yet — add one below.")
     else:
-        header = st.columns([1.4, 1.6, 1.2, 1.4, 0.9, 0.6])
-        for col, label in zip(header, ["Category", "Description", "Amount", "Repeats", "Next Due", ""]):
-            col.markdown(f"**{label}**")
+        with st.container(key="tablehead_rec"):
+            header = st.columns([1.4, 1.6, 1.2, 1.4, 0.9, 0.6])
+            for col, label in zip(header, ["Category", "Description", "Amount", "Repeats", "Next Due", ""]):
+                col.markdown(f"**{label}**")
         for i, rule in enumerate(rules):
             with st.container(key=f"hoverrow_rec_{i}"):
                 c = st.columns([1.4, 1.6, 1.2, 1.4, 0.9, 0.6])
@@ -871,9 +900,10 @@ elif page == "Settings":
     if not cats:
         st.info("No categories yet — add one below.")
     else:
-        header = st.columns([2.5, 1, 1.5, 0.6])
-        for col, label in zip(header, ["Category", "Type", "Group", ""]):
-            col.markdown(f"**{label}**")
+        with st.container(key="tablehead_cat"):
+            header = st.columns([2.5, 1, 1.5, 0.6])
+            for col, label in zip(header, ["Category", "Type", "Group", ""]):
+                col.markdown(f"**{label}**")
         for i, cat in enumerate(cats):
             with st.container(key=f"hoverrow_cat_{i}"):
                 c = st.columns([2.5, 1, 1.5, 0.6])

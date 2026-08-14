@@ -46,3 +46,49 @@ def inject() -> None:
         .replace("__ICON_B64__", _ICON_B64)
     )
     components.html(html, height=0, width=0)
+
+
+_NUMBER_INPUT_UX = """
+<script>
+(function() {
+    var doc = window.parent.document;
+    if (doc._numberInputUxBound) return;
+    doc._numberInputUxBound = true;
+    // Tapping/clicking into a number field selects its whole value, so typing immediately
+    // replaces it instead of inserting alongside the existing "0.00". Event delegation on
+    // the document (rather than binding each input) survives Streamlit re-rendering the
+    // page on every rerun.
+    doc.addEventListener("focusin", function(e) {
+        var el = e.target;
+        if (el && el.tagName === "INPUT" && el.type === "number") {
+            // Deferred: a mouse click's own default action (placing the cursor where you
+            // clicked) runs *after* the focus event, so calling select() immediately gets
+            // silently undone by it. Pushing this to the next tick runs after that settles.
+            setTimeout(function() { el.select(); }, 0);
+        }
+    });
+
+    // Cap typed input at 2 decimal places in real time (not just on blur/rerun). These are
+    // React-controlled inputs, so a plain `el.value = ...` wouldn't be seen by React -- using
+    // the native setter plus a re-dispatched "input" event is the standard way to change a
+    // controlled input's value from outside React and have it actually stick.
+    var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    doc.addEventListener("input", function(e) {
+        var el = e.target;
+        if (!(el && el.tagName === "INPUT" && el.type === "number")) return;
+        var v = el.value;
+        var m = v.match(/^-?\\d*\\.?\\d{0,2}/);
+        var trimmed = m ? m[0] : "";
+        if (trimmed !== v) {
+            nativeSetter.call(el, trimmed);
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+    });
+})();
+</script>
+"""
+
+
+def inject_number_input_ux() -> None:
+    """Call once per page render. Auto-selects a number input's value on focus."""
+    components.html(_NUMBER_INPUT_UX, height=0, width=0)

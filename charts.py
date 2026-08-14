@@ -148,7 +148,9 @@ def group_by_month_bar(long_df: pd.DataFrame, x_order: list[str], colors: dict[s
     plus a pre-computed 'pct' column — each group's share of that month's total).
 
     `normalize=True` shows each month as a 100%-stacked bar (share of that month) instead of
-    absolute dollars, and the tooltip shows the percentage instead of the dollar amount.
+    absolute dollars, and the tooltip/labels show the percentage instead of the dollar amount.
+    Values are also printed directly on each bar segment, not just in the hover tooltip — on
+    mobile there's no hover, so tap-only tooltips would otherwise be unreadable.
     """
     if long_df.empty:
         st.caption("No data yet.")
@@ -156,23 +158,29 @@ def group_by_month_bar(long_df: pd.DataFrame, x_order: list[str], colors: dict[s
     domain = list(colors.keys())
     range_ = list(colors.values())
     y_axis = alt.Axis(format="%") if normalize else MONEY_AXIS
+    text_field = "pct" if normalize else "amount"
+    text_format = ".0%" if normalize else "$,.0f"
     value_tooltip = (
         alt.Tooltip("pct:Q", title="Share", format=".0%")
         if normalize
         else alt.Tooltip("amount:Q", title="Amount", format="$,.2f")
     )
-    chart = (
-        alt.Chart(long_df)
-        .mark_bar()
-        .encode(
-            x=alt.X("month_label:N", title=None, sort=x_order),
-            y=alt.Y("amount:Q", title=None, axis=y_axis, stack="normalize" if normalize else "zero"),
-            color=alt.Color("group:N", scale=alt.Scale(domain=domain, range=range_), legend=alt.Legend(title=None, orient="top")),
-            tooltip=[alt.Tooltip("month_label:N", title="Month"), alt.Tooltip("group:N", title="Group"), value_tooltip],
-        )
-        .properties(height=height)
+
+    base = alt.Chart(long_df).encode(
+        x=alt.X("month_label:N", title=None, sort=x_order),
+        y=alt.Y("amount:Q", title=None, axis=y_axis, stack="normalize" if normalize else "zero"),
+        color=alt.Color("group:N", scale=alt.Scale(domain=domain, range=range_), legend=alt.Legend(title=None, orient="top")),
     )
-    st.altair_chart(chart, use_container_width=True)
+    bars = base.mark_bar().encode(
+        tooltip=[alt.Tooltip("month_label:N", title="Month"), alt.Tooltip("group:N", title="Group"), value_tooltip],
+    )
+    labels = (
+        base.transform_filter("datum.amount > 0")
+        .mark_text(color="white", fontWeight="bold", fontSize=11)
+        .encode(text=alt.Text(f"{text_field}:Q", format=text_format))
+    )
+
+    st.altair_chart((bars + labels).properties(height=height), use_container_width=True)
 
 
 def single_series_bar(df: pd.DataFrame, x_col: str, y_col: str, x_order: list[str],
