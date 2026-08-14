@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 import analytics
+import charts
 import components
 import db
 
@@ -15,13 +16,16 @@ db.init_db()
 
 CURRENT_MONTH = dt.date.today().strftime("%Y-%m")
 money = components.money
+fmt_month = analytics.format_month
 
-st.title("💰 Budget Tracker")
+TREND_COLORS = {"Income": "#0ea5e9", "Expenses": "#ef4444", "Savings": "#16a34a"}
+COMPARE_COLORS = {"This month": "#2563eb", "3-month avg": "#94a3b8"}
+
 page = st.sidebar.radio(
     "Go to",
     [
-        "📸 Snapshot", "📊 Overview", "📅 Breakdown", "🎯 Budget", "🏦 Savings",
-        "🧾 Transactions", "➕ Add Transaction", "⚙️ Settings",
+        "Snapshot", "Overview", "Breakdown", "Monthly Budget", "Savings",
+        "Transactions", "Add Transaction", "Settings",
     ],
 )
 
@@ -29,8 +33,9 @@ df = analytics.load_df()
 groups = db.get_category_groups()
 
 # ======================================================================= Snapshot
-if page == "📸 Snapshot":
-    st.caption(f"Quick overview for {CURRENT_MONTH}")
+if page == "Snapshot":
+    st.title("💰 Budget Tracker")
+    st.caption(f"Quick overview for {fmt_month(CURRENT_MONTH)}")
     month_df = df[df["month"] == CURRENT_MONTH] if not df.empty else df
     income = month_df.loc[month_df["type"] == "income", "amount"].sum()
     breakdown = analytics.group_breakdown(month_df, groups)
@@ -44,7 +49,7 @@ if page == "📸 Snapshot":
     c4.metric("To Savings", f"${breakdown['Savings']:,.2f}")
 
     st.divider()
-    st.subheader("⚠️ Budget warnings")
+    st.subheader("Budget warnings")
     budgets = db.get_budgets()
     spent_by_cat = (
         month_df[month_df["type"] == "expense"].groupby("category")["amount"].sum()
@@ -59,12 +64,16 @@ if page == "📸 Snapshot":
             warnings.append((b["category"], spent, limit, pct))
     warnings.sort(key=lambda x: -x[3])
     if not budgets:
-        st.caption("No budgets set yet — set some on the Budget page.")
+        st.caption("No budgets set yet — set some on the Monthly Budget page.")
     elif not warnings:
         st.success("No budgets are near or over their limit this month.")
     else:
         for category, spent, limit, pct in warnings:
-            st.write(f"{components.status_badge(pct)} **{category}** — {money(spent)} / {money(limit)} ({pct:.0%})")
+            wc1, wc2 = st.columns([1, 6])
+            with wc1:
+                st.markdown(components.status_pill(pct), unsafe_allow_html=True)
+            with wc2:
+                st.write(f"**{category}** — {money(spent)} / {money(limit)} ({pct:.0%})")
             components.colored_progress(pct)
 
     st.divider()
@@ -73,7 +82,11 @@ if page == "📸 Snapshot":
     this_week = analytics.weekly_totals(df, weeks=1)
     spent_this_week = float(this_week["amount"].iloc[0]) if not this_week.empty else 0.0
     week_pct = spent_this_week / weekly_goal if weekly_goal > 0 else 0.0
-    st.write(f"{components.status_badge(week_pct)} Spent {money(spent_this_week)} of {money(weekly_goal)} this week")
+    wk1, wk2 = st.columns([1, 6])
+    with wk1:
+        st.markdown(components.status_pill(week_pct), unsafe_allow_html=True)
+    with wk2:
+        st.write(f"Spent {money(spent_this_week)} of {money(weekly_goal)} this week")
     components.colored_progress(week_pct)
 
     st.divider()
@@ -89,34 +102,59 @@ if page == "📸 Snapshot":
             st.progress(pct)
 
 # ======================================================================= Overview
-elif page == "📊 Overview":
+elif page == "Overview":
     st.caption("Everything you've logged, broken down by month and by week — no filters.")
     if df.empty:
         st.info("No transactions yet — this page fills in as you log income and expenses.")
     else:
         summary = analytics.monthly_summary(df, groups)
+        month_order = list(summary.index)
+        x_order = [fmt_month(m) for m in month_order]
 
-        st.subheader("Income vs. expenses over time")
-        st.caption("Expenses here = Needs + Wants. Savings contributions are excluded (that money isn't spent).")
-        st.line_chart(summary[["Total Income", "Expenses"]].rename(columns={"Total Income": "Income"}))
+        st.subheader("Income vs. expenses vs. savings over time")
+        st.caption("Expenses = Needs + Wants. Savings is tracked separately since that money isn't spent.")
+        trend_long = summary.reset_index()
+        trend_long["month_label"] = trend_long["month"].map(fmt_month)
+        trend_long = trend_long.rename(columns={"Total Income": "Income"})
+        trend_long = trend_long.melt(
+            id_vars=["month_label"], value_vars=["Income", "Expenses", "Savings"],
+            var_name="Series", value_name="Amount",
+        )
+        charts.multi_line(trend_long, x_col="month_label", series_col="Series", y_col="Amount",
+                           colors=TREND_COLORS, x_order=x_order)
 
         st.subheader("Expense breakdown (all time)")
         st.caption("Needs / Wants / Savings share of everything you've logged.")
         all_time_breakdown = analytics.group_breakdown(df, groups)
         components.percentage_bar(all_time_breakdown.to_dict())
 
+        st.subheader("Needs / Wants / Savings by month")
+        gbm = analytics.group_breakdown_by_month(df, groups)
+        if not gbm.empty:
+            gbm_months = sorted(gbm["month"].unique())
+            gbm_order = [fmt_month(m) for m in gbm_months]
+            gbm = gbm.copy()
+            gbm["month_label"] = gbm["month"].map(fmt_month)
+            charts.group_by_month_bar(gbm, x_order=gbm_order, colors=db.GROUP_COLORS)
+
         st.subheader("Monthly summary")
         display_cols = ["Total Income", "Needs", "Wants", "Savings", "Expenses", "Net Income"]
-        st.dataframe(summary[display_cols].T.style.format("${:,.2f}"), use_container_width=True)
+        display_summary = summary[display_cols].T
+        display_summary.columns = [fmt_month(c) for c in display_summary.columns]
+        st.dataframe(display_summary.style.format("${:,.2f}"), use_container_width=True)
 
         st.subheader("Expenses by category")
         expense_pivot = analytics.category_month_pivot(df, "expense")
         if not expense_pivot.empty:
+            expense_pivot = expense_pivot.copy()
+            expense_pivot.columns = [fmt_month(c) for c in expense_pivot.columns]
             st.dataframe(expense_pivot.style.format("${:,.2f}"), use_container_width=True)
 
         st.subheader("Income by category")
         income_pivot = analytics.category_month_pivot(df, "income")
         if not income_pivot.empty:
+            income_pivot = income_pivot.copy()
+            income_pivot.columns = [fmt_month(c) for c in income_pivot.columns]
             st.dataframe(income_pivot.style.format("${:,.2f}"), use_container_width=True)
 
         st.divider()
@@ -124,13 +162,15 @@ elif page == "📊 Overview":
         st.caption("Discretionary spend only — excludes Savings.")
         weekly_goal = float(db.get_setting("weekly_spending_goal", "400"))
         weekly = analytics.weekly_totals(df, all_time=True)
-        weekly["Goal"] = weekly_goal
-        st.line_chart(weekly.set_index("week_start")[["amount", "Goal"]].rename(columns={"amount": "Spent"}))
+        weekly_chart_df = weekly.rename(columns={"amount": "Spent"})
+        weekly_chart_df["Goal"] = weekly_goal
+        charts.weekly_line(weekly_chart_df[["week_start", "Spent", "Goal"]])
 
         weekly_table = weekly.copy()
         weekly_table["Week"] = (
-            weekly_table["week_start"].dt.strftime("%Y-%m-%d") + " to " + weekly_table["week_end"].dt.strftime("%Y-%m-%d")
+            weekly_table["week_start"].dt.strftime("%b %d, %Y") + " to " + weekly_table["week_end"].dt.strftime("%b %d, %Y")
         )
+        weekly_table["Goal"] = weekly_goal
         weekly_table["Over/Under"] = weekly_table["amount"] - weekly_table["Goal"]
         st.dataframe(
             weekly_table[["Week", "amount", "Goal", "Over/Under"]]
@@ -142,15 +182,15 @@ elif page == "📊 Overview":
         )
 
 # ======================================================================= Breakdown
-elif page == "📅 Breakdown":
+elif page == "Breakdown":
     view_mode = st.radio("View by", ["Month", "Year"], horizontal=True)
 
     if view_mode == "Month":
         months = analytics.all_months(df)
         default_index = months.index(CURRENT_MONTH) if CURRENT_MONTH in months else len(months) - 1
-        selected_month = st.selectbox("Month", months, index=default_index)
+        selected_month = st.selectbox("Month", months, index=default_index, format_func=fmt_month)
         scope_df = df[df["month"] == selected_month] if not df.empty else df
-        period_label = selected_month
+        period_label = fmt_month(selected_month)
     else:
         years = sorted({d.year for d in df["date"]}) if not df.empty else [dt.date.today().year]
         this_year = dt.date.today().year
@@ -172,12 +212,13 @@ elif page == "📅 Breakdown":
     left, right = st.columns(2)
     with left:
         st.subheader("Spending by category")
-        expense_df = scope_df[scope_df["type"] == "expense"]
+        st.caption("Excludes Savings contributions.")
+        expense_df = scope_df[(scope_df["type"] == "expense") & (scope_df["category"].map(groups) != "Savings")]
         if expense_df.empty:
             st.info("No expenses this period.")
         else:
             by_cat = expense_df.groupby("category")["amount"].sum().sort_values(ascending=False)
-            st.bar_chart(by_cat)
+            charts.category_bar(by_cat)
     with right:
         st.subheader("Income by category")
         income_df = scope_df[scope_df["type"] == "income"]
@@ -185,7 +226,7 @@ elif page == "📅 Breakdown":
             st.info("No income this period.")
         else:
             by_cat_income = income_df.groupby("category")["amount"].sum().sort_values(ascending=False)
-            st.bar_chart(by_cat_income)
+            charts.category_bar(by_cat_income)
 
     st.divider()
     st.subheader("Needs / Wants / Savings")
@@ -205,7 +246,8 @@ elif page == "📅 Breakdown":
                 avg3 = analytics.three_month_avg(df, cat, selected_month)
                 compare_rows.append({"Category": cat, "This month": spent, "3-month avg": avg3})
             compare_df = pd.DataFrame(compare_rows).set_index("Category")
-            st.bar_chart(compare_df)
+            compare_df = compare_df.sort_values("This month", ascending=False)
+            charts.compare_bar(compare_df, COMPARE_COLORS)
 
     st.divider()
     st.subheader(f"Transactions — {period_label}")
@@ -221,8 +263,8 @@ elif page == "📅 Breakdown":
             hide_index=True,
         )
 
-# =========================================================================== Budget
-elif page == "🎯 Budget":
+# ================================================================= Monthly Budget
+elif page == "Monthly Budget":
     expense_cats = db.category_names("expense")
     budgets = db.get_budgets()
     existing_budget_cats = {b["category"] for b in budgets}
@@ -257,12 +299,12 @@ elif page == "🎯 Budget":
         if c2.button("Cancel"):
             st.rerun()
 
-    st.subheader("Budget vs. actual")
+    st.subheader("Monthly Budget")
     if not expense_cats:
         st.warning("No expense categories yet — add one on the Settings page first.")
     months = analytics.all_months(df)
     default_index = months.index(CURRENT_MONTH) if CURRENT_MONTH in months else len(months) - 1
-    selected_month = st.selectbox("Month", months, index=default_index, key="budget_month")
+    selected_month = st.selectbox("Month", months, index=default_index, key="budget_month", format_func=fmt_month)
 
     if not budgets:
         st.info("No budgets set yet — add one below.")
@@ -286,19 +328,21 @@ elif page == "🎯 Budget":
         rows.sort(key=lambda r: -r["% Used"])
 
         for row in rows:
-            rc1, rc2 = st.columns([12, 1])
+            rc1, rc2, rc3, rc4 = st.columns([0.9, 2.5, 3, 0.6])
             with rc1:
-                st.write(
-                    f"{components.status_badge(row['% Used'])} **{row['Category']}** — "
-                    f"{money(row['Spent'])} / {money(row['Budget'])} ({row['% Used']:.0%})"
-                )
-                components.colored_progress(row["% Used"])
+                st.markdown(components.status_pill(row["% Used"]), unsafe_allow_html=True)
             with rc2:
+                st.markdown(f"**{row['Category']}**")
+            with rc3:
+                st.markdown(f"{money(row['Spent'])} / {money(row['Budget'])}  ({row['% Used']:.0%})")
+            with rc4:
                 with st.popover("⋮", key=f"budget_pop_{row['Category']}"):
                     if st.button("Edit", key=f"budget_edit_{row['Category']}", use_container_width=True):
                         edit_budget_dialog(row["Category"], row["Budget"])
                     if st.button("Delete", key=f"budget_del_{row['Category']}", use_container_width=True):
                         delete_budget_dialog(row["Category"])
+            components.colored_progress(row["% Used"])
+            st.write("")
 
         st.divider()
         st.caption("Full detail, including the 3-month trailing average:")
@@ -312,11 +356,11 @@ elif page == "🎯 Budget":
         )
 
     st.divider()
-    if st.button("➕ Add budget"):
+    if st.button("+ Add budget"):
         add_budget_dialog()
 
 # ========================================================================== Savings
-elif page == "🏦 Savings":
+elif page == "Savings":
     goals = db.get_savings_goals()
 
     @st.dialog("Add a savings goal")
@@ -361,6 +405,13 @@ elif page == "🏦 Savings":
     if not goals:
         st.info("No savings goals yet — add one below.")
     else:
+        total_current = sum(analytics.savings_current_amount(g, df) for g in goals)
+        total_goal = sum(g["goal_amount"] for g in goals)
+        pct_all = min(total_current / total_goal, 1.0) if total_goal > 0 else 0.0
+        st.markdown(f"**Total across all goals** — {money(total_current)} / {money(total_goal)} ({pct_all:.0%})")
+        components.colored_progress(pct_all)
+        st.divider()
+
         for g in goals:
             current = analytics.savings_current_amount(g, df)
             pct = min(current / g["goal_amount"], 1.0) if g["goal_amount"] > 0 else 0.0
@@ -377,7 +428,7 @@ elif page == "🏦 Savings":
                         delete_goal_dialog(g)
         st.divider()
 
-    if st.button("➕ Add goal"):
+    if st.button("+ Add goal"):
         add_goal_dialog()
 
     st.divider()
@@ -408,7 +459,7 @@ elif page == "🏦 Savings":
         st.caption("Add a goal first to log contributions toward it.")
 
 # ===================================================================== Transactions
-elif page == "🧾 Transactions":
+elif page == "Transactions":
     st.subheader("All transactions")
 
     @st.dialog("Add a transaction")
@@ -559,11 +610,11 @@ elif page == "🧾 Transactions":
                         delete_transaction_dialog(row)
 
     st.divider()
-    if st.button("➕ Add transaction"):
+    if st.button("+ Add transaction"):
         add_transaction_dialog()
 
 # ================================================================ Add Transaction
-elif page == "➕ Add Transaction":
+elif page == "Add Transaction":
     st.subheader("Add a transaction")
     type_ = st.radio("Type", ["expense", "income"], horizontal=True, format_func=str.capitalize)
     category_options = db.category_names(type_)
@@ -602,7 +653,7 @@ elif page == "➕ Add Transaction":
                     st.rerun()
 
 # ========================================================================= Settings
-elif page == "⚙️ Settings":
+elif page == "Settings":
     cats = db.get_categories()
 
     @st.dialog("Add a category")
@@ -672,7 +723,7 @@ elif page == "⚙️ Settings":
                         delete_category_dialog(cat)
 
     st.divider()
-    if st.button("➕ Add category"):
+    if st.button("+ Add category"):
         add_category_dialog()
 
     st.divider()

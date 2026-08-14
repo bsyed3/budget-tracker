@@ -5,7 +5,7 @@ import streamlit as st
 
 import db
 
-_FONT = '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif'
+_FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
 
 
 def money(x: float) -> str:
@@ -67,9 +67,16 @@ def colored_progress(pct: float) -> None:
     )
 
 
-def status_badge(pct: float) -> str:
+def status_pill(pct: float) -> str:
+    """A small colored badge (HTML) — pass to st.markdown(..., unsafe_allow_html=True)."""
     if pct >= 1.0:
-        return "🔴 Over"
-    if pct >= 0.8:
-        return "🟡 Near limit"
-    return "🟢 OK"
+        bg, label = "#dc2626", "OVER"
+    elif pct >= 0.8:
+        bg, label = "#f59e0b", "NEAR"
+    else:
+        bg, label = "#16a34a", "OK"
+    return (
+        f'<span style="background:{bg};color:white;padding:3px 10px;border-radius:999px;'
+        f'font-size:11px;font-weight:700;letter-spacing:.03em;font-family:{_FONT};'
+        f'display:inline-block;white-space:nowrap;">{label}</span>'
+    )

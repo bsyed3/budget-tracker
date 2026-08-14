@@ -27,6 +27,11 @@ def all_months(df: pd.DataFrame, pad_current: bool = True) -> list[str]:
     return sorted(months)
 
 
+def format_month(ym: str) -> str:
+    """'2026-08' -> 'Aug 2026'."""
+    return pd.Period(ym, freq="M").strftime("%b %Y")
+
+
 def category_month_pivot(df: pd.DataFrame, type_: str) -> pd.DataFrame:
     """Rows = category, columns = YYYY-MM, values = summed amount."""
     subset = df[df["type"] == type_]
@@ -61,16 +66,29 @@ def monthly_summary(df: pd.DataFrame, groups: dict[str, str]) -> pd.DataFrame:
         out[g] = expense_by_group[g].reindex(out.index, fill_value=0.0)
     out["Expenses"] = out["Needs"] + out["Wants"]
     out["Net Income"] = out["Total Income"] - out["Needs"] - out["Wants"] - out["Savings"]
-    return out.sort_index()
+    out = out.sort_index()
+    out.index.name = "month"
+    return out
 
 
 def group_breakdown(df: pd.DataFrame, groups: dict[str, str]) -> pd.Series:
-    """Total expense amount per Needs/Wants/Savings/Donations group for whatever rows are passed in."""
+    """Total expense amount per Needs/Wants/Savings group for whatever rows are passed in."""
     expense_df = df[df["type"] == "expense"].copy()
     if expense_df.empty:
         return pd.Series(0.0, index=db.GROUP_NAMES)
     expense_df["group"] = expense_df["category"].map(groups).fillna("Wants")
     return expense_df.groupby("group")["amount"].sum().reindex(db.GROUP_NAMES, fill_value=0.0)
+
+
+def group_breakdown_by_month(df: pd.DataFrame, groups: dict[str, str]) -> pd.DataFrame:
+    """Long-format month/group/amount, for a Needs/Wants/Savings-over-time chart."""
+    work = df[df["type"] == "expense"].copy()
+    if work.empty:
+        return pd.DataFrame(columns=["month", "group", "amount"])
+    work["group"] = work["category"].map(groups).fillna("Wants")
+    out = work.groupby(["month", "group"])["amount"].sum().reset_index()
+    out.columns = ["month", "group", "amount"]
+    return out
 
 
 def three_month_avg(df: pd.DataFrame, category: str, month: str) -> float:
