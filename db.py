@@ -82,6 +82,30 @@ def init_db() -> None:
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS recurring_transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT NOT NULL CHECK (type IN ('income', 'expense')),
+                category TEXT NOT NULL,
+                description TEXT,
+                amount REAL NOT NULL CHECK (amount > 0),
+                frequency TEXT NOT NULL CHECK (frequency IN ('weekly', 'biweekly', 'monthly', 'yearly')),
+                start_date TEXT NOT NULL,
+                next_due_date TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1,
+                goal_id INTEGER REFERENCES savings_goals(id) ON DELETE SET NULL
+            )
+            """
+        )
+        # Link generated transactions back to the rule that created them (nullable — manual
+        # transactions and anything created before this feature existed just have NULL here).
+        txn_cols = [r["name"] for r in conn.execute("PRAGMA table_info(transactions)")]
+        if "recurring_id" not in txn_cols:
+            conn.execute(
+                "ALTER TABLE transactions ADD COLUMN recurring_id "
+                "INTEGER REFERENCES recurring_transactions(id) ON DELETE SET NULL"
+            )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS categories (
                 name TEXT PRIMARY KEY,
                 type TEXT NOT NULL CHECK (type IN ('income', 'expense')),
@@ -159,13 +183,14 @@ def init_db() -> None:
 
 # ------------------------------------------------------------------ transactions
 def add_transaction(
-    date: str, type_: str, category: str, description: str, amount: float, goal_id: int | None = None
+    date: str, type_: str, category: str, description: str, amount: float,
+    goal_id: int | None = None, recurring_id: int | None = None,
 ) -> int:
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO transactions (date, type, category, description, amount, goal_id) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (date, type_, category, description, amount, goal_id),
+            "INSERT INTO transactions (date, type, category, description, amount, goal_id, recurring_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (date, type_, category, description, amount, goal_id, recurring_id),
         )
         return cur.lastrowid
 
@@ -253,6 +278,53 @@ def update_category_group(name: str, group_name: str) -> None:
 def delete_category(name: str) -> None:
     with get_conn() as conn:
         conn.execute("DELETE FROM categories WHERE name = ?", (name,))
+
+
+# ------------------------------------------------------------ recurring transactions
+def add_recurring(
+    type_: str, category: str, description: str, amount: float, frequency: str,
+    start_date: str, goal_id: int | None = None,
+) -> int:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO recurring_transactions "
+            "(type, category, description, amount, frequency, start_date, next_due_date, active, goal_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
+            (type_, category, description, amount, frequency, start_date, start_date, goal_id),
+        )
+        return cur.lastrowid
+
+
+def update_recurring(
+    rule_id: int, category: str, description: str, amount: float, frequency: str,
+    next_due_date: str, active: bool,
+) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE recurring_transactions SET category = ?, description = ?, amount = ?, "
+            "frequency = ?, next_due_date = ?, active = ? WHERE id = ?",
+            (category, description, amount, frequency, next_due_date, int(active), rule_id),
+        )
+
+
+def set_recurring_active(rule_id: int, active: bool) -> None:
+    with get_conn() as conn:
+        conn.execute("UPDATE recurring_transactions SET active = ? WHERE id = ?", (int(active), rule_id))
+
+
+def set_recurring_next_due(rule_id: int, next_due_date: str) -> None:
+    with get_conn() as conn:
+        conn.execute("UPDATE recurring_transactions SET next_due_date = ? WHERE id = ?", (next_due_date, rule_id))
+
+
+def delete_recurring(rule_id: int) -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM recurring_transactions WHERE id = ?", (rule_id,))
+
+
+def get_recurring_rules() -> list[sqlite3.Row]:
+    with get_conn() as conn:
+        return conn.execute("SELECT * FROM recurring_transactions ORDER BY next_due_date").fetchall()
 
 
 # ----------------------------------------------------------------- savings goals

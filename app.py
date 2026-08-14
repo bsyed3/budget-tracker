@@ -10,9 +10,17 @@ import analytics
 import charts
 import components
 import db
+import recurring
 
 st.set_page_config(page_title="Budget Tracker", page_icon="💰", layout="wide")
 db.init_db()
+
+# Auto-generate any recurring transactions that have come due (checked on every load; cheap
+# and idempotent — backfills every missed occurrence, not just one, if it's been a while).
+_recurring_created = recurring.generate_due_transactions()
+if _recurring_created and st.session_state.get("_last_recurring_toast") != dt.date.today().isoformat():
+    st.toast(f"Added {_recurring_created} recurring transaction(s) that came due.")
+    st.session_state["_last_recurring_toast"] = dt.date.today().isoformat()
 
 CURRENT_MONTH = dt.date.today().strftime("%Y-%m")
 money = components.money
@@ -25,7 +33,7 @@ page = st.sidebar.radio(
     "Go to",
     [
         "Snapshot", "Overview", "Breakdown", "Monthly Budget", "Savings",
-        "Transactions", "Add Transaction", "Settings",
+        "Transactions", "Recurring", "Add Transaction", "Settings",
     ],
 )
 
@@ -600,7 +608,11 @@ elif page == "Transactions":
             c[1].write(row["date"].strftime("%Y-%m-%d"))
             c[2].write(row["type"].capitalize())
             c[3].write(row["category"])
-            c[4].write(row["description"] or "")
+            desc = row["description"] or ""
+            if pd.notna(row.get("recurring_id")):
+                c[4].markdown(f"{desc}  {components.tag('AUTO', '#64748b')}", unsafe_allow_html=True)
+            else:
+                c[4].write(desc)
             c[5].write(money(row["amount"]))
             with c[6]:
                 with st.popover("⋮", key=f"txn_pop_{row['id']}"):
@@ -612,6 +624,116 @@ elif page == "Transactions":
     st.divider()
     if st.button("+ Add transaction"):
         add_transaction_dialog()
+
+# ========================================================================= Recurring
+elif page == "Recurring":
+    st.subheader("Recurring transactions")
+    st.caption(
+        "Automatically logged when they come due — every time you open the app. "
+        "Editing a rule only affects future occurrences; past transactions it already created "
+        "stay as-is (edit those individually on the Transactions page)."
+    )
+    rules = db.get_recurring_rules()
+
+    @st.dialog("Add a recurring transaction")
+    def add_recurring_dialog():
+        type_ = st.radio("Type", ["expense", "income"], horizontal=True, format_func=str.capitalize, key="rec_add_type")
+        cats = db.category_names(type_)
+        if not cats:
+            st.warning(f"No {type_} categories yet — add one on the Settings page first.")
+            return
+        c1, c2 = st.columns(2)
+        category = c1.selectbox("Category", cats, key="rec_add_cat")
+        frequency = c2.selectbox(
+            "Repeats", recurring.FREQUENCIES, format_func=lambda f: recurring.FREQUENCY_LABELS[f], key="rec_add_freq"
+        )
+        goal_id = None
+        if type_ == "expense" and groups.get(category) == "Savings":
+            rgoals = db.get_savings_goals()
+            if rgoals:
+                choice = st.selectbox("Savings goal (optional)", ["None"] + [g["name"] for g in rgoals], key="rec_add_goal")
+                if choice != "None":
+                    goal_id = next(g["id"] for g in rgoals if g["name"] == choice)
+        description = st.text_input("Description (optional)", key="rec_add_desc")
+        c3, c4 = st.columns(2)
+        amount = c3.number_input("Amount", min_value=0.0, step=1.0, format="%.2f", key="rec_add_amt")
+        start_date = c4.date_input("First occurrence", value=dt.date.today(), key="rec_add_start")
+        st.caption("Past dates are backfilled immediately; future dates start on that day.")
+        if st.button("Save", type="primary", key="rec_add_submit"):
+            if amount <= 0:
+                st.error("Amount must be greater than zero.")
+            else:
+                db.add_recurring(type_, category, description, amount, frequency, start_date.isoformat(), goal_id)
+                st.rerun()
+
+    @st.dialog("Edit recurring transaction")
+    def edit_recurring_dialog(rule):
+        rid = int(rule["id"])
+        st.write(f"**{rule['category']}** ({rule['type'].capitalize()})")
+        c1, c2 = st.columns(2)
+        amount = c1.number_input("Amount", min_value=0.0, step=1.0, value=float(rule["amount"]), format="%.2f", key=f"rec_edit_amt_{rid}")
+        frequency = c2.selectbox(
+            "Repeats", recurring.FREQUENCIES, index=recurring.FREQUENCIES.index(rule["frequency"]),
+            format_func=lambda f: recurring.FREQUENCY_LABELS[f], key=f"rec_edit_freq_{rid}",
+        )
+        description = st.text_input("Description", value=rule["description"] or "", key=f"rec_edit_desc_{rid}")
+        next_due = st.date_input(
+            "Next due date", value=dt.date.fromisoformat(rule["next_due_date"]), key=f"rec_edit_next_{rid}"
+        )
+        active = st.checkbox("Active", value=bool(rule["active"]), key=f"rec_edit_active_{rid}")
+        if st.button("Save changes", type="primary", key=f"rec_edit_submit_{rid}"):
+            if amount <= 0:
+                st.error("Amount must be greater than zero.")
+            else:
+                db.update_recurring(rid, rule["category"], description, amount, frequency, next_due.isoformat(), active)
+                st.rerun()
+
+    @st.dialog("Delete recurring transaction")
+    def delete_recurring_dialog(rule):
+        rid = int(rule["id"])
+        st.warning(
+            f"Delete the recurring rule for **{rule['category']}** ({money(rule['amount'])}, "
+            f"{recurring.FREQUENCY_LABELS[rule['frequency']]})? Transactions it already created stay — "
+            "this only stops future ones."
+        )
+        c1, c2 = st.columns(2)
+        if c1.button("Yes, delete", type="primary", key=f"rec_del_confirm_{rid}"):
+            db.delete_recurring(rid)
+            st.rerun()
+        if c2.button("Cancel", key=f"rec_del_cancel_{rid}"):
+            st.rerun()
+
+    if not rules:
+        st.info("No recurring transactions yet — add one below.")
+    else:
+        header = st.columns([1.4, 1.6, 1.2, 1.4, 0.9, 0.6])
+        for col, label in zip(header, ["Category", "Description", "Amount", "Repeats", "Next due", ""]):
+            col.markdown(f"**{label}**")
+        for rule in rules:
+            c = st.columns([1.4, 1.6, 1.2, 1.4, 0.9, 0.6])
+            c[0].write(f"{rule['category']} ({rule['type'].capitalize()})")
+            c[1].write(rule["description"] or "")
+            c[2].write(money(rule["amount"]))
+            c[3].write(recurring.FREQUENCY_LABELS[rule["frequency"]])
+            with c[4]:
+                if rule["active"]:
+                    c[4].write(dt.date.fromisoformat(rule["next_due_date"]).strftime("%b %d, %Y"))
+                else:
+                    st.markdown(components.tag("PAUSED", "#64748b"), unsafe_allow_html=True)
+            with c[5]:
+                with st.popover("⋮", key=f"rec_pop_{rule['id']}"):
+                    if st.button("Edit", key=f"rec_edit_{rule['id']}", use_container_width=True):
+                        edit_recurring_dialog(rule)
+                    pause_label = "Resume" if not rule["active"] else "Pause"
+                    if st.button(pause_label, key=f"rec_toggle_{rule['id']}", use_container_width=True):
+                        db.set_recurring_active(rule["id"], not rule["active"])
+                        st.rerun()
+                    if st.button("Delete", key=f"rec_del_{rule['id']}", use_container_width=True):
+                        delete_recurring_dialog(rule)
+
+    st.divider()
+    if st.button("+ Add recurring transaction"):
+        add_recurring_dialog()
 
 # ================================================================ Add Transaction
 elif page == "Add Transaction":

@@ -19,12 +19,18 @@ prior Excel-based budget (transactions, income, monthly pivots, savings goals, a
 - **Savings** — a total-across-all-goals summary plus named savings goals with progress bars;
   log contributions as linked transactions
 - **Transactions** — browse/search/filter everything, income/expense totals shown separately,
-  pagination
+  pagination; edit or delete any transaction via its "⋮" menu
+- **Recurring** — rules for transactions that repeat (weekly / every 2 weeks / monthly / yearly),
+  e.g. a paycheck every 2 weeks or insurance on the same day each month. Auto-generated as
+  transactions every time the app is opened — including backfilling any occurrences missed while
+  it was closed. Pause, edit, or delete a rule anytime; past transactions it already created are
+  untouched either way
 - **Add Transaction** — log income or an expense, categories pulled live from Settings
 - **Settings** — manage categories (add/remove, assign Needs/Wants/Savings group), set the
   weekly spending goal
 
-Every table (Savings goals, Budgets, Transactions, Categories) supports add/edit/delete directly:
+Every table (Savings goals, Budgets, Transactions, Recurring rules, Categories) supports
+add/edit/delete directly:
 a "+ Add" button below the table opens a popup form, and each row has a "⋮" menu with Edit/Delete.
 
 Categories are fully user-editable on the Settings page — there's no hardcoded category list.

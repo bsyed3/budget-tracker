@@ -75,8 +75,13 @@ def status_pill(pct: float) -> str:
         bg, label = "#f59e0b", "NEAR"
     else:
         bg, label = "#16a34a", "OK"
+    return tag(label, bg)
+
+
+def tag(label: str, color: str) -> str:
+    """A small colored badge (HTML) with an arbitrary label/color — same styling as status_pill."""
     return (
-        f'<span style="background:{bg};color:white;padding:3px 10px;border-radius:999px;'
+        f'<span style="background:{color};color:white;padding:3px 10px;border-radius:999px;'
         f'font-size:11px;font-weight:700;letter-spacing:.03em;font-family:{_FONT};'
         f'display:inline-block;white-space:nowrap;">{label}</span>'
     )

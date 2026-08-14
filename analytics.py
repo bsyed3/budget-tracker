@@ -10,7 +10,7 @@ import db
 
 def load_df() -> pd.DataFrame:
     rows = db.get_transactions()
-    cols = ["id", "date", "type", "category", "description", "amount", "goal_id"]
+    cols = ["id", "date", "type", "category", "description", "amount", "goal_id", "recurring_id"]
     if not rows:
         return pd.DataFrame(columns=cols)
     df = pd.DataFrame([dict(r) for r in rows])
