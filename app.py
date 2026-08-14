@@ -26,6 +26,19 @@ CURRENT_MONTH = dt.date.today().strftime("%Y-%m")
 money = components.money
 fmt_month = analytics.format_month
 
+# Row "⋮" edit/delete menus only reveal themselves when hovering the row they belong to.
+# Every hoverable row is wrapped in st.container(key=f"hoverrow_..."), which Streamlit renders
+# with a stable "st-key-hoverrow_..." class on the wrapping div — this CSS targets that.
+st.markdown(
+    """
+    <style>
+    div[class*="st-key-hoverrow_"] div[data-testid="stPopover"] { visibility: hidden; }
+    div[class*="st-key-hoverrow_"]:hover div[data-testid="stPopover"] { visibility: visible; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 TREND_COLORS = {"Income": "#0ea5e9", "Expenses": "#ef4444", "Savings": "#16a34a"}
 COMPARE_COLORS = {"This month": "#2563eb", "3-month avg": "#94a3b8"}
 
@@ -57,7 +70,7 @@ if page == "Snapshot":
     c4.metric("To Savings", f"${breakdown['Savings']:,.2f}")
 
     st.divider()
-    st.subheader("Budget warnings")
+    st.subheader("Budget Warnings")
     budgets = db.get_budgets()
     spent_by_cat = (
         month_df[month_df["type"] == "expense"].groupby("category")["amount"].sum()
@@ -85,7 +98,7 @@ if page == "Snapshot":
             components.colored_progress(pct)
 
     st.divider()
-    st.subheader("This week")
+    st.subheader("This Week")
     weekly_goal = float(db.get_setting("weekly_spending_goal", "400"))
     this_week = analytics.weekly_totals(df, weeks=1)
     spent_this_week = float(this_week["amount"].iloc[0]) if not this_week.empty else 0.0
@@ -98,7 +111,7 @@ if page == "Snapshot":
     components.colored_progress(week_pct)
 
     st.divider()
-    st.subheader("Savings snapshot")
+    st.subheader("Savings Snapshot")
     goals = db.get_savings_goals()
     if not goals:
         st.caption("No savings goals yet — add one on the Savings page.")
@@ -119,7 +132,7 @@ elif page == "Overview":
         month_order = list(summary.index)
         x_order = [fmt_month(m) for m in month_order]
 
-        st.subheader("Income vs. expenses vs. savings over time")
+        st.subheader("Income vs. Expenses vs. Savings Over Time")
         st.caption("Expenses = Needs + Wants. Savings is tracked separately since that money isn't spent.")
         trend_long = summary.reset_index()
         trend_long["month_label"] = trend_long["month"].map(fmt_month)
@@ -131,13 +144,13 @@ elif page == "Overview":
         charts.multi_line(trend_long, x_col="month_label", series_col="Series", y_col="Amount",
                            colors=TREND_COLORS, x_order=x_order)
 
-        st.subheader("Expense breakdown (all time)")
+        st.subheader("Expense Breakdown (All Time)")
         st.caption("Needs / Wants / Savings share of everything you've logged.")
         all_time_breakdown = analytics.group_breakdown(df, groups)
         components.percentage_bar(all_time_breakdown.to_dict())
 
         nws_header, nws_toggle = st.columns([4, 1])
-        nws_header.subheader("Needs / Wants / Savings by month")
+        nws_header.subheader("Needs / Wants / Savings by Month")
         show_pct = nws_toggle.toggle("Show %", key="nws_by_month_pct")
         gbm = analytics.group_breakdown_by_month(df, groups)
         if not gbm.empty:
@@ -145,30 +158,33 @@ elif page == "Overview":
             gbm_order = [fmt_month(m) for m in gbm_months]
             gbm = gbm.copy()
             gbm["month_label"] = gbm["month"].map(fmt_month)
+            gbm["pct"] = gbm.groupby("month")["amount"].transform(lambda x: x / x.sum())
             charts.group_by_month_bar(gbm, x_order=gbm_order, colors=db.GROUP_COLORS, normalize=show_pct)
 
-        st.subheader("Monthly summary")
+        st.subheader("Monthly Summary")
         display_cols = ["Total Income", "Needs", "Wants", "Savings", "Expenses", "Net Income"]
         display_summary = summary[display_cols].T
         display_summary.columns = [fmt_month(c) for c in display_summary.columns]
         st.dataframe(display_summary.style.format("${:,.2f}"), use_container_width=True)
 
-        st.subheader("Expenses by category")
+        st.subheader("Expenses by Category")
         expense_pivot = analytics.category_month_pivot(df, "expense")
         if not expense_pivot.empty:
             expense_pivot = expense_pivot.copy()
             expense_pivot.columns = [fmt_month(c) for c in expense_pivot.columns]
+            expense_pivot.index.name = "Category"
             st.dataframe(expense_pivot.style.format("${:,.2f}"), use_container_width=True)
 
-        st.subheader("Income by category")
+        st.subheader("Income by Category")
         income_pivot = analytics.category_month_pivot(df, "income")
         if not income_pivot.empty:
             income_pivot = income_pivot.copy()
             income_pivot.columns = [fmt_month(c) for c in income_pivot.columns]
+            income_pivot.index.name = "Category"
             st.dataframe(income_pivot.style.format("${:,.2f}"), use_container_width=True)
 
         st.divider()
-        weekly_scope_label = st.radio("Weekly breakdown scope", ["Wants", "Needs", "Total"], horizontal=True)
+        weekly_scope_label = st.radio("Weekly Breakdown Scope", ["Wants", "Needs", "Total"], horizontal=True)
         weekly_scope = weekly_scope_label.lower()
         st.subheader(f"Weekly Breakdown - {weekly_scope_label}")
         if weekly_scope_label == "Total":
@@ -224,7 +240,7 @@ elif page == "Breakdown":
     c3.metric("To Savings", f"${breakdown['Savings']:,.2f}")
 
     st.divider()
-    st.subheader("Spending by category")
+    st.subheader("Spending by Category")
     st.caption("Excludes Savings contributions. Colored by group — Needs (blue) / Wants (orange).")
     expense_df = scope_df[(scope_df["type"] == "expense") & (scope_df["category"].map(groups) != "Savings")]
     if expense_df.empty:
@@ -234,7 +250,7 @@ elif page == "Breakdown":
         charts.category_bar_by_group(by_cat, groups, db.GROUP_COLORS)
 
     st.divider()
-    st.subheader("Income by category")
+    st.subheader("Income by Category")
     income_df = scope_df[scope_df["type"] == "income"]
     if income_df.empty:
         st.info("No income this period.")
@@ -253,10 +269,10 @@ elif page == "Breakdown":
         n_prior = len(prior_available)
         avg_label = {0: None, 1: "Previous month", 2: "Previous 2 months"}.get(n_prior, "3-month avg")
         title = {
-            0: "This month vs. your average",
-            1: "This month vs. last month",
-            2: "This month vs. your 2-month average",
-        }.get(n_prior, "This month vs. your 3-month average")
+            0: "This Month vs. Your Average",
+            1: "This Month vs. Last Month",
+            2: "This Month vs. Your 2-Month Average",
+        }.get(n_prior, "This Month vs. Your 3-Month Average")
         st.subheader(title)
 
         if n_prior == 0:
@@ -285,8 +301,10 @@ elif page == "Breakdown":
         display = scope_df.copy()
         display["date"] = display["date"].dt.strftime("%Y-%m-%d")
         display["type"] = display["type"].str.capitalize()
+        display = display[["date", "type", "category", "description", "amount"]].sort_values("date", ascending=False)
+        display.columns = ["Date", "Type", "Category", "Description", "Amount"]
         st.dataframe(
-            display[["date", "type", "category", "description", "amount"]].sort_values("date", ascending=False),
+            display,
             use_container_width=True,
             hide_index=True,
         )
@@ -297,7 +315,7 @@ elif page == "Monthly Budget":
     budgets = db.get_budgets()
     existing_budget_cats = {b["category"] for b in budgets}
 
-    @st.dialog("Add a budget")
+    @st.dialog("Add a Budget")
     def add_budget_dialog():
         available = [c for c in expense_cats if c not in existing_budget_cats]
         if not available:
@@ -309,7 +327,7 @@ elif page == "Monthly Budget":
             db.set_budget(category, limit)
             st.rerun()
 
-    @st.dialog("Edit budget")
+    @st.dialog("Edit Budget")
     def edit_budget_dialog(category: str, current_limit: float):
         st.write(f"**{category}**")
         limit = st.number_input("Monthly limit", min_value=0.0, step=10.0, value=float(current_limit), format="%.2f")
@@ -317,7 +335,7 @@ elif page == "Monthly Budget":
             db.set_budget(category, limit)
             st.rerun()
 
-    @st.dialog("Remove budget")
+    @st.dialog("Remove Budget")
     def delete_budget_dialog(category: str):
         st.warning(f"Remove the budget for **{category}**?")
         c1, c2 = st.columns(2)
@@ -356,21 +374,22 @@ elif page == "Monthly Budget":
             )
         rows.sort(key=lambda r: -r["% Used"])
 
-        for row in rows:
-            rc1, rc2, rc3, rc4 = st.columns([0.9, 2.5, 3, 0.6])
-            with rc1:
-                st.markdown(components.status_pill(row["% Used"]), unsafe_allow_html=True)
-            with rc2:
-                st.markdown(f"**{row['Category']}**")
-            with rc3:
-                st.markdown(f"{money(row['Spent'])} / {money(row['Budget'])}  ({row['% Used']:.0%})")
-            with rc4:
-                with st.popover("⋮", key=f"budget_pop_{row['Category']}"):
-                    if st.button("Edit", key=f"budget_edit_{row['Category']}", use_container_width=True):
-                        edit_budget_dialog(row["Category"], row["Budget"])
-                    if st.button("Delete", key=f"budget_del_{row['Category']}", use_container_width=True):
-                        delete_budget_dialog(row["Category"])
-            components.colored_progress(row["% Used"])
+        for i, row in enumerate(rows):
+            with st.container(key=f"hoverrow_budget_{i}"):
+                rc1, rc2, rc3, rc4 = st.columns([0.9, 2.5, 3, 0.6])
+                with rc1:
+                    st.markdown(components.status_pill(row["% Used"]), unsafe_allow_html=True)
+                with rc2:
+                    st.markdown(f"**{row['Category']}**")
+                with rc3:
+                    st.markdown(f"{money(row['Spent'])} / {money(row['Budget'])}  ({row['% Used']:.0%})")
+                with rc4:
+                    with st.popover("⋮", key=f"budget_pop_{row['Category']}"):
+                        if st.button("Edit", key=f"budget_edit_{row['Category']}", use_container_width=True):
+                            edit_budget_dialog(row["Category"], row["Budget"])
+                        if st.button("Delete", key=f"budget_del_{row['Category']}", use_container_width=True):
+                            delete_budget_dialog(row["Category"])
+                components.colored_progress(row["% Used"])
             st.write("")
 
         st.divider()
@@ -392,7 +411,7 @@ elif page == "Monthly Budget":
 elif page == "Savings":
     goals = db.get_savings_goals()
 
-    @st.dialog("Add a savings goal")
+    @st.dialog("Add a Savings Goal")
     def add_goal_dialog():
         name = st.text_input("Goal name (e.g. Emergency Fund, Travel, Car)")
         c1, c2, c3 = st.columns(3)
@@ -406,7 +425,7 @@ elif page == "Savings":
                 db.add_savings_goal(name.strip(), goal_amount, monthly_target, starting_amount, dt.date.today().isoformat())
                 st.rerun()
 
-    @st.dialog("Edit savings goal")
+    @st.dialog("Edit Savings Goal")
     def edit_goal_dialog(goal):
         st.write(f"**{goal['name']}**")
         c1, c2, c3 = st.columns(3)
@@ -417,7 +436,7 @@ elif page == "Savings":
             db.update_savings_goal(goal["id"], goal_amount, monthly_target, starting_amount)
             st.rerun()
 
-    @st.dialog("Delete savings goal")
+    @st.dialog("Delete Savings Goal")
     def delete_goal_dialog(goal):
         st.warning(
             f"Delete **{goal['name']}**? This can't be undone. Past contributions logged to it "
@@ -430,7 +449,7 @@ elif page == "Savings":
         if c2.button("Cancel"):
             st.rerun()
 
-    st.subheader("Savings goals")
+    st.subheader("Savings Goals")
     if not goals:
         st.info("No savings goals yet — add one below.")
     else:
@@ -441,27 +460,28 @@ elif page == "Savings":
         components.colored_progress(pct_all)
         st.divider()
 
-        for g in goals:
+        for i, g in enumerate(goals):
             current = analytics.savings_current_amount(g, df)
             pct = min(current / g["goal_amount"], 1.0) if g["goal_amount"] > 0 else 0.0
-            rc1, rc2 = st.columns([12, 1])
-            with rc1:
-                st.markdown(f"**{g['name']}** — {money(current)} / {money(g['goal_amount'])}  ({pct:.0%})")
-                st.progress(pct)
-                st.caption(f"Monthly target: {money(g['monthly_target'])}")
-            with rc2:
-                with st.popover("⋮", key=f"goal_pop_{g['id']}"):
-                    if st.button("Edit", key=f"goal_edit_{g['id']}", use_container_width=True):
-                        edit_goal_dialog(g)
-                    if st.button("Delete", key=f"goal_del_{g['id']}", use_container_width=True):
-                        delete_goal_dialog(g)
+            with st.container(key=f"hoverrow_goal_{i}"):
+                rc1, rc2 = st.columns([12, 1])
+                with rc1:
+                    st.markdown(f"**{g['name']}** — {money(current)} / {money(g['goal_amount'])}  ({pct:.0%})")
+                    st.progress(pct)
+                    st.caption(f"Monthly target: {money(g['monthly_target'])}")
+                with rc2:
+                    with st.popover("⋮", key=f"goal_pop_{g['id']}"):
+                        if st.button("Edit", key=f"goal_edit_{g['id']}", use_container_width=True):
+                            edit_goal_dialog(g)
+                        if st.button("Delete", key=f"goal_del_{g['id']}", use_container_width=True):
+                            delete_goal_dialog(g)
         st.divider()
 
     if st.button("+ Add goal"):
         add_goal_dialog()
 
     st.divider()
-    st.subheader("Savings by month")
+    st.subheader("Savings by Month")
     gbm_savings = analytics.group_breakdown_by_month(df, groups)
     savings_by_month = gbm_savings[gbm_savings["group"] == "Savings"] if not gbm_savings.empty else gbm_savings
     if savings_by_month.empty:
@@ -476,7 +496,7 @@ elif page == "Savings":
         )
 
     st.divider()
-    st.subheader("Add a contribution")
+    st.subheader("Add a Contribution")
     savings_categories = [c for c, g in groups.items() if g == "Savings"]
     if goals and savings_categories:
         with st.form("contribute", clear_on_submit=True):
@@ -504,9 +524,9 @@ elif page == "Savings":
 
 # ===================================================================== Transactions
 elif page == "Transactions":
-    st.subheader("All transactions")
+    st.subheader("All Transactions")
 
-    @st.dialog("Add a transaction")
+    @st.dialog("Add a Transaction")
     def add_transaction_dialog():
         type_ = st.radio("Type", ["expense", "income"], horizontal=True, format_func=str.capitalize, key="dlg_add_type")
         cats = db.category_names(type_)
@@ -532,7 +552,7 @@ elif page == "Transactions":
                 db.add_transaction(date.isoformat(), type_, category, description, amount, goal_id)
                 st.rerun()
 
-    @st.dialog("Edit transaction")
+    @st.dialog("Edit Transaction")
     def edit_transaction_dialog(txn):
         tid = int(txn["id"])
         type_ = st.radio(
@@ -556,7 +576,7 @@ elif page == "Transactions":
                 db.update_transaction(tid, date.isoformat(), type_, category, description, amount, goal_id)
                 st.rerun()
 
-    @st.dialog("Delete transaction")
+    @st.dialog("Delete Transaction")
     def delete_transaction_dialog(txn):
         tid = int(txn["id"])
         st.warning(
@@ -580,7 +600,7 @@ elif page == "Transactions":
         f1, f2, f3 = st.columns([1, 1.4, 1.6])
         type_choice = f1.radio("Type", ["All", "Income", "Expense"], horizontal=True)
         min_date, max_date = df["date"].min().date(), df["date"].max().date()
-        date_range = f2.date_input("Date range", value=(min_date, max_date), min_value=min_date, max_value=max_date)
+        date_range = f2.date_input("Date Range", value=(min_date, max_date), min_value=min_date, max_value=max_date)
         search = f3.text_input("Search category or description")
 
         f4, f5 = st.columns(2)
@@ -642,24 +662,25 @@ elif page == "Transactions":
         for col, label in zip(header, ["ID", "Date", "Type", "Category", "Description", "Amount", ""]):
             col.markdown(f"**{label}**")
 
-        for _, row in page_df.iterrows():
-            c = st.columns([0.6, 1, 0.8, 1.3, 2, 1, 0.5])
-            c[0].write(str(row["id"]))
-            c[1].write(row["date"].strftime("%Y-%m-%d"))
-            c[2].write(row["type"].capitalize())
-            c[3].write(row["category"])
-            desc = row["description"] or ""
-            if pd.notna(row.get("recurring_id")):
-                c[4].markdown(f"{desc}  {components.tag('AUTO', '#64748b')}", unsafe_allow_html=True)
-            else:
-                c[4].write(desc)
-            c[5].write(money(row["amount"]))
-            with c[6]:
-                with st.popover("⋮", key=f"txn_pop_{row['id']}"):
-                    if st.button("Edit", key=f"txn_edit_{row['id']}", use_container_width=True):
-                        edit_transaction_dialog(row)
-                    if st.button("Delete", key=f"txn_del_{row['id']}", use_container_width=True):
-                        delete_transaction_dialog(row)
+        for i, (_, row) in enumerate(page_df.iterrows()):
+            with st.container(key=f"hoverrow_txn_{i}"):
+                c = st.columns([0.6, 1, 0.8, 1.3, 2, 1, 0.5])
+                c[0].write(str(row["id"]))
+                c[1].write(row["date"].strftime("%Y-%m-%d"))
+                c[2].write(row["type"].capitalize())
+                c[3].write(row["category"])
+                desc = row["description"] or ""
+                if pd.notna(row.get("recurring_id")):
+                    c[4].markdown(f"{desc}  {components.tag('AUTO', '#64748b')}", unsafe_allow_html=True)
+                else:
+                    c[4].write(desc)
+                c[5].write(money(row["amount"]))
+                with c[6]:
+                    with st.popover("⋮", key=f"txn_pop_{row['id']}"):
+                        if st.button("Edit", key=f"txn_edit_{row['id']}", use_container_width=True):
+                            edit_transaction_dialog(row)
+                        if st.button("Delete", key=f"txn_del_{row['id']}", use_container_width=True):
+                            delete_transaction_dialog(row)
 
 # ========================================================================= Recurring
 elif page == "Recurring Transactions":
@@ -671,7 +692,7 @@ elif page == "Recurring Transactions":
     )
     rules = db.get_recurring_rules()
 
-    @st.dialog("Add a recurring transaction")
+    @st.dialog("Add a Recurring Transaction")
     def add_recurring_dialog():
         type_ = st.radio("Type", ["expense", "income"], horizontal=True, format_func=str.capitalize, key="rec_add_type")
         cats = db.category_names(type_)
@@ -702,7 +723,7 @@ elif page == "Recurring Transactions":
                 db.add_recurring(type_, category, description, amount, frequency, start_date.isoformat(), goal_id)
                 st.rerun()
 
-    @st.dialog("Edit recurring transaction")
+    @st.dialog("Edit Recurring Transaction")
     def edit_recurring_dialog(rule):
         rid = int(rule["id"])
         st.write(f"**{rule['category']}** ({rule['type'].capitalize()})")
@@ -724,7 +745,7 @@ elif page == "Recurring Transactions":
                 db.update_recurring(rid, rule["category"], description, amount, frequency, next_due.isoformat(), active)
                 st.rerun()
 
-    @st.dialog("Delete recurring transaction")
+    @st.dialog("Delete Recurring Transaction")
     def delete_recurring_dialog(rule):
         rid = int(rule["id"])
         st.warning(
@@ -743,29 +764,30 @@ elif page == "Recurring Transactions":
         st.info("No recurring transactions yet — add one below.")
     else:
         header = st.columns([1.4, 1.6, 1.2, 1.4, 0.9, 0.6])
-        for col, label in zip(header, ["Category", "Description", "Amount", "Repeats", "Next due", ""]):
+        for col, label in zip(header, ["Category", "Description", "Amount", "Repeats", "Next Due", ""]):
             col.markdown(f"**{label}**")
-        for rule in rules:
-            c = st.columns([1.4, 1.6, 1.2, 1.4, 0.9, 0.6])
-            c[0].write(f"{rule['category']} ({rule['type'].capitalize()})")
-            c[1].write(rule["description"] or "")
-            c[2].write(money(rule["amount"]))
-            c[3].write(recurring.FREQUENCY_LABELS[rule["frequency"]])
-            with c[4]:
-                if rule["active"]:
-                    c[4].write(dt.date.fromisoformat(rule["next_due_date"]).strftime("%b %d, %Y"))
-                else:
-                    st.markdown(components.tag("PAUSED", "#64748b"), unsafe_allow_html=True)
-            with c[5]:
-                with st.popover("⋮", key=f"rec_pop_{rule['id']}"):
-                    if st.button("Edit", key=f"rec_edit_{rule['id']}", use_container_width=True):
-                        edit_recurring_dialog(rule)
-                    pause_label = "Resume" if not rule["active"] else "Pause"
-                    if st.button(pause_label, key=f"rec_toggle_{rule['id']}", use_container_width=True):
-                        db.set_recurring_active(rule["id"], not rule["active"])
-                        st.rerun()
-                    if st.button("Delete", key=f"rec_del_{rule['id']}", use_container_width=True):
-                        delete_recurring_dialog(rule)
+        for i, rule in enumerate(rules):
+            with st.container(key=f"hoverrow_rec_{i}"):
+                c = st.columns([1.4, 1.6, 1.2, 1.4, 0.9, 0.6])
+                c[0].write(f"{rule['category']} ({rule['type'].capitalize()})")
+                c[1].write(rule["description"] or "")
+                c[2].write(money(rule["amount"]))
+                c[3].write(recurring.FREQUENCY_LABELS[rule["frequency"]])
+                with c[4]:
+                    if rule["active"]:
+                        c[4].write(dt.date.fromisoformat(rule["next_due_date"]).strftime("%b %d, %Y"))
+                    else:
+                        st.markdown(components.tag("PAUSED", "#64748b"), unsafe_allow_html=True)
+                with c[5]:
+                    with st.popover("⋮", key=f"rec_pop_{rule['id']}"):
+                        if st.button("Edit", key=f"rec_edit_{rule['id']}", use_container_width=True):
+                            edit_recurring_dialog(rule)
+                        pause_label = "Resume" if not rule["active"] else "Pause"
+                        if st.button(pause_label, key=f"rec_toggle_{rule['id']}", use_container_width=True):
+                            db.set_recurring_active(rule["id"], not rule["active"])
+                            st.rerun()
+                        if st.button("Delete", key=f"rec_del_{rule['id']}", use_container_width=True):
+                            delete_recurring_dialog(rule)
 
     st.divider()
     if st.button("+ Add recurring transaction"):
@@ -775,7 +797,7 @@ elif page == "Recurring Transactions":
 elif page == "Settings":
     cats = db.get_categories()
 
-    @st.dialog("Add a category")
+    @st.dialog("Add a Category")
     def add_category_dialog():
         name = st.text_input("Category name")
         c1, c2 = st.columns(2)
@@ -791,7 +813,7 @@ elif page == "Settings":
                 db.add_category(name.strip(), new_type, new_group if new_type == "expense" else None)
                 st.rerun()
 
-    @st.dialog("Edit category")
+    @st.dialog("Edit Category")
     def edit_category_dialog(cat):
         old_name = cat["name"]
         new_name = st.text_input("Category name", value=old_name)
@@ -826,7 +848,7 @@ elif page == "Settings":
                     db.update_category(old_name, clean_name, new_type, new_group)
                     st.rerun()
 
-    @st.dialog("Remove category")
+    @st.dialog("Remove Category")
     def delete_category_dialog(cat):
         st.warning(
             f"Remove **{cat['name']}**? Past transactions keep their category text — this only "
@@ -850,25 +872,29 @@ elif page == "Settings":
         header = st.columns([2.5, 1, 1.5, 0.6])
         for col, label in zip(header, ["Category", "Type", "Group", ""]):
             col.markdown(f"**{label}**")
-        for cat in cats:
-            c = st.columns([2.5, 1, 1.5, 0.6])
-            c[0].write(cat["name"])
-            c[1].write(cat["type"].capitalize())
-            c[2].write(cat["group_name"] or "—")
-            with c[3]:
-                with st.popover("⋮", key=f"cat_pop_{cat['name']}"):
-                    if st.button("Edit", key=f"cat_edit_{cat['name']}", use_container_width=True):
-                        edit_category_dialog(cat)
-                    if st.button("Delete", key=f"cat_del_{cat['name']}", use_container_width=True):
-                        delete_category_dialog(cat)
+        for i, cat in enumerate(cats):
+            with st.container(key=f"hoverrow_cat_{i}"):
+                c = st.columns([2.5, 1, 1.5, 0.6])
+                c[0].write(cat["name"])
+                c[1].write(cat["type"].capitalize())
+                c[2].write(cat["group_name"] or "—")
+                with c[3]:
+                    with st.popover("⋮", key=f"cat_pop_{cat['name']}"):
+                        if st.button("Edit", key=f"cat_edit_{cat['name']}", use_container_width=True):
+                            edit_category_dialog(cat)
+                        if st.button("Delete", key=f"cat_del_{cat['name']}", use_container_width=True):
+                            delete_category_dialog(cat)
 
     st.divider()
     if st.button("+ Add category"):
         add_category_dialog()
 
     st.divider()
-    st.subheader("Weekly spending goal")
-    st.caption("Used on the Snapshot and Overview pages. Excludes Savings.")
+    st.subheader("Weekly Spending Goal")
+    st.caption(
+        "Used on Snapshot's weekly check (Needs + Wants, excludes Savings) and Overview's "
+        "Weekly Breakdown chart, where you can scope it to Wants, Needs, or Total."
+    )
     current_goal = float(db.get_setting("weekly_spending_goal", "400"))
     new_goal = st.number_input("Weekly goal", min_value=0.0, step=10.0, value=current_goal, format="%.2f")
     if st.button("Save weekly goal"):

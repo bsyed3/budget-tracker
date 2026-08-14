@@ -144,10 +144,11 @@ def weekly_line(weekly_df: pd.DataFrame, height: int = 300) -> None:
 
 def group_by_month_bar(long_df: pd.DataFrame, x_order: list[str], colors: dict[str, str],
                         height: int = 300, normalize: bool = False) -> None:
-    """Stacked bars of Needs/Wants/Savings amounts per month (long_df has month_label/group/amount).
+    """Stacked bars of Needs/Wants/Savings amounts per month (long_df has month_label/group/amount,
+    plus a pre-computed 'pct' column — each group's share of that month's total).
 
     `normalize=True` shows each month as a 100%-stacked bar (share of that month) instead of
-    absolute dollars.
+    absolute dollars, and the tooltip shows the percentage instead of the dollar amount.
     """
     if long_df.empty:
         st.caption("No data yet.")
@@ -155,6 +156,11 @@ def group_by_month_bar(long_df: pd.DataFrame, x_order: list[str], colors: dict[s
     domain = list(colors.keys())
     range_ = list(colors.values())
     y_axis = alt.Axis(format="%") if normalize else MONEY_AXIS
+    value_tooltip = (
+        alt.Tooltip("pct:Q", title="Share", format=".0%")
+        if normalize
+        else alt.Tooltip("amount:Q", title="Amount", format="$,.2f")
+    )
     chart = (
         alt.Chart(long_df)
         .mark_bar()
@@ -162,7 +168,7 @@ def group_by_month_bar(long_df: pd.DataFrame, x_order: list[str], colors: dict[s
             x=alt.X("month_label:N", title=None, sort=x_order),
             y=alt.Y("amount:Q", title=None, axis=y_axis, stack="normalize" if normalize else "zero"),
             color=alt.Color("group:N", scale=alt.Scale(domain=domain, range=range_), legend=alt.Legend(title=None, orient="top")),
-            tooltip=[alt.Tooltip("month_label:N", title="Month"), alt.Tooltip("group:N", title="Group"), alt.Tooltip("amount:Q", format="$,.2f")],
+            tooltip=[alt.Tooltip("month_label:N", title="Month"), alt.Tooltip("group:N", title="Group"), value_tooltip],
         )
         .properties(height=height)
     )
@@ -181,7 +187,7 @@ def single_series_bar(df: pd.DataFrame, x_col: str, y_col: str, x_order: list[st
         .encode(
             x=alt.X(f"{x_col}:N", title=None, sort=x_order),
             y=alt.Y(f"{y_col}:Q", title=None, axis=MONEY_AXIS),
-            tooltip=[alt.Tooltip(f"{x_col}:N"), alt.Tooltip(f"{y_col}:Q", format="$,.2f")],
+            tooltip=[alt.Tooltip(f"{x_col}:N", title="Month"), alt.Tooltip(f"{y_col}:Q", title="Amount", format="$,.2f")],
         )
         .properties(height=height)
     )
