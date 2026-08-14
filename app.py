@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 import analytics
+import components
 import db
 
 st.set_page_config(page_title="Budget Tracker", page_icon="💰", layout="wide")
@@ -16,204 +17,202 @@ CURRENT_MONTH = dt.date.today().strftime("%Y-%m")
 
 st.title("💰 Budget Tracker")
 page = st.sidebar.radio(
-    "Go to", ["Dashboard", "Add Transaction", "Transactions", "Master Table", "Budget", "Savings"]
+    "Go to",
+    [
+        "📸 Snapshot", "📊 Overview", "🔍 Explore", "🎯 Budget", "🏦 Savings",
+        "🧾 Transactions", "➕ Add Transaction", "⚙️ Settings",
+    ],
 )
 
 df = analytics.load_df()
 groups = db.get_category_groups()
 
-# ===================================================================== Dashboard
-if page == "Dashboard":
-    months = analytics.all_months(df)
-    options = ["All time"] + months
-    default_index = options.index(CURRENT_MONTH) if CURRENT_MONTH in options else len(options) - 1
-    selected = st.selectbox("Month", options, index=default_index)
-    month_df = df if selected == "All time" else df[df["month"] == selected]
-
+# ======================================================================= Snapshot
+if page == "📸 Snapshot":
+    st.caption(f"Quick overview for {CURRENT_MONTH}")
+    month_df = df[df["month"] == CURRENT_MONTH] if not df.empty else df
     income = month_df.loc[month_df["type"] == "income", "amount"].sum()
-    expenses = month_df.loc[month_df["type"] == "expense", "amount"].sum()
-    savings_contrib = month_df.loc[
-        (month_df["type"] == "expense") & (month_df["category"] == "Savings/Investments"), "amount"
-    ].sum()
-    net = income - expenses
+    breakdown = analytics.group_breakdown(month_df, groups)
+    expenses = breakdown["Needs"] + breakdown["Wants"] + breakdown["Donations"]
+    net = income - breakdown.sum()
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Income", f"${income:,.2f}")
     c2.metric("Expenses", f"${expenses:,.2f}")
     c3.metric("Net", f"${net:,.2f}")
-    c4.metric("To Savings", f"${savings_contrib:,.2f}")
+    c4.metric("To Savings", f"${breakdown['Savings']:,.2f}")
 
     st.divider()
-    left, right = st.columns(2)
-
-    with left:
-        st.subheader("Spending by category")
-        expense_df = month_df[month_df["type"] == "expense"]
-        if expense_df.empty:
-            st.info("No expenses recorded for this period yet.")
-        else:
-            by_cat = expense_df.groupby("category")["amount"].sum().sort_values(ascending=False)
-            st.bar_chart(by_cat)
-
-    with right:
-        st.subheader("Needs / Wants / Savings & Donations")
-        expense_df = month_df[month_df["type"] == "expense"].copy()
-        if expense_df.empty:
-            st.info("No expenses recorded for this period yet.")
-        else:
-            expense_df["group"] = expense_df["category"].map(groups).fillna("Wants")
-            by_group = expense_df.groupby("group")["amount"].sum().reindex(db.GROUP_NAMES, fill_value=0.0)
-            st.bar_chart(by_group)
+    st.subheader("⚠️ Budget warnings")
+    budgets = db.get_budgets()
+    spent_by_cat = (
+        month_df[month_df["type"] == "expense"].groupby("category")["amount"].sum()
+        if not month_df.empty else pd.Series(dtype=float)
+    )
+    warnings = []
+    for b in budgets:
+        limit = b["monthly_limit"]
+        spent = float(spent_by_cat.get(b["category"], 0.0))
+        pct = spent / limit if limit > 0 else 0.0
+        if pct >= 0.8:
+            warnings.append((b["category"], spent, limit, pct))
+    warnings.sort(key=lambda x: -x[3])
+    if not budgets:
+        st.caption("No budgets set yet — set some on the Budget page.")
+    elif not warnings:
+        st.success("No budgets are near or over their limit this month.")
+    else:
+        for category, spent, limit, pct in warnings:
+            st.write(f"{components.status_badge(pct)} **{category}** — ${spent:,.2f} / ${limit:,.2f} ({pct:.0%})")
+            components.colored_progress(pct)
 
     st.divider()
-    st.subheader("Income vs. expenses over time")
+    st.subheader("This week")
+    weekly_goal = float(db.get_setting("weekly_spending_goal", "400"))
+    this_week = analytics.weekly_totals(df, weeks=1)
+    spent_this_week = float(this_week["amount"].iloc[0]) if not this_week.empty else 0.0
+    week_pct = spent_this_week / weekly_goal if weekly_goal > 0 else 0.0
+    st.write(
+        f"{components.status_badge(week_pct)} Spent ${spent_this_week:,.2f} of ${weekly_goal:,.2f} this week"
+    )
+    components.colored_progress(week_pct)
+
+    st.divider()
+    st.subheader("Savings snapshot")
+    goals = db.get_savings_goals()
+    if not goals:
+        st.caption("No savings goals yet — add one on the Savings page.")
+    else:
+        for g in goals:
+            current = analytics.savings_current_amount(g, df)
+            pct = min(current / g["goal_amount"], 1.0) if g["goal_amount"] > 0 else 0.0
+            st.write(f"**{g['name']}** — ${current:,.2f} / ${g['goal_amount']:,.2f} ({pct:.0%})")
+            st.progress(pct)
+
+# ======================================================================= Overview
+elif page == "📊 Overview":
+    st.caption("Everything you've logged, broken down by month and by week — no filters.")
     if df.empty:
-        st.info("No transactions yet.")
+        st.info("No transactions yet — this page fills in as you log income and expenses.")
     else:
         summary = analytics.monthly_summary(df, groups)
-        trend = pd.DataFrame(
-            {
-                "Income": summary["Total Income"],
-                "Expenses": summary["Total Needs"] + summary["Total Wants"] + summary["Total Savings & Donations"],
-            }
+        st.subheader("Income vs. expenses over time")
+        st.caption("Expenses here = Needs + Wants + Donations. Savings contributions are excluded (that money isn't spent).")
+        st.line_chart(summary[["Total Income", "Expenses"]].rename(columns={"Total Income": "Income"}))
+
+        st.subheader("Monthly summary")
+        display_cols = ["Total Income", "Needs", "Wants", "Savings", "Donations", "Expenses", "Net Income"]
+        st.dataframe(summary[display_cols].T.style.format("${:,.2f}"), use_container_width=True)
+
+        st.subheader("Expenses by category")
+        expense_pivot = analytics.category_month_pivot(df, "expense")
+        if not expense_pivot.empty:
+            st.dataframe(expense_pivot.style.format("${:,.2f}"), use_container_width=True)
+
+        st.subheader("Income by category")
+        income_pivot = analytics.category_month_pivot(df, "income")
+        if not income_pivot.empty:
+            st.dataframe(income_pivot.style.format("${:,.2f}"), use_container_width=True)
+
+        st.divider()
+        st.subheader("Weekly breakdown (all time)")
+        st.caption("Discretionary spend only — excludes Savings and Donations.")
+        weekly_goal = float(db.get_setting("weekly_spending_goal", "400"))
+        weekly = analytics.weekly_totals(df, all_time=True)
+        weekly["Goal"] = weekly_goal
+        st.line_chart(weekly.set_index("week_start")[["amount", "Goal"]].rename(columns={"amount": "Spent"}))
+
+        weekly_table = weekly.copy()
+        weekly_table["Week"] = (
+            weekly_table["week_start"].dt.strftime("%Y-%m-%d") + " to " + weekly_table["week_end"].dt.strftime("%Y-%m-%d")
         )
-        st.line_chart(trend)
-
-    st.divider()
-    st.subheader("Weekly spending vs. goal")
-    st.caption("Week starting date shown. Excludes Savings/Investments and Donations.")
-    weekly_goal = float(db.get_setting("weekly_spending_goal", "400"))
-    weekly = analytics.weekly_totals(df, weeks=12).set_index("week_start")
-    weekly["Goal"] = weekly_goal
-    st.bar_chart(weekly[["amount", "Goal"]].rename(columns={"amount": "Spent"}), stack=False)
-
-# ================================================================ Add Transaction
-elif page == "Add Transaction":
-    st.subheader("Add a transaction")
-    type_ = st.radio("Type", ["expense", "income"], horizontal=True)
-    category_options = (db.EXPENSE_CATEGORIES if type_ == "expense" else db.INCOME_CATEGORIES) + ["Custom..."]
-
-    with st.form("add_transaction", clear_on_submit=True):
-        c1, c2 = st.columns(2)
-        date = c1.date_input("Date", value=dt.date.today())
-        category = c2.selectbox("Category", category_options)
-        custom_category = ""
-        if category == "Custom...":
-            custom_category = st.text_input("Custom category name")
-
-        goal_id = None
-        if type_ == "expense" and category == "Savings/Investments":
-            goals = db.get_savings_goals()
-            if goals:
-                goal_choice = st.selectbox(
-                    "Contributing to which savings goal? (optional)",
-                    ["None"] + [g["name"] for g in goals],
-                )
-                if goal_choice != "None":
-                    goal_id = next(g["id"] for g in goals if g["name"] == goal_choice)
-            else:
-                st.caption("No savings goals set up yet — add one on the Savings page to link contributions.")
-
-        description = st.text_input("Description (optional)")
-        amount = st.number_input("Amount", min_value=0.0, step=1.0, format="%.2f")
-        submitted = st.form_submit_button("Add")
-
-        if submitted:
-            final_category = custom_category.strip() if category == "Custom..." else category
-            if not final_category:
-                st.error("Please provide a category.")
-            elif amount <= 0:
-                st.error("Amount must be greater than zero.")
-            else:
-                db.add_transaction(date.isoformat(), type_, final_category, description, amount, goal_id)
-                st.success(f"Added {type_}: ${amount:,.2f} ({final_category})")
-                st.rerun()
-
-# =================================================================== Transactions
-elif page == "Transactions":
-    st.subheader("All transactions")
-    if df.empty:
-        st.info("No transactions yet. Add one from the 'Add Transaction' page.")
-    else:
-        f1, f2, f3 = st.columns(3)
-        type_filter = f1.multiselect("Type", ["income", "expense"], default=["income", "expense"])
-        all_cats = sorted(df["category"].unique())
-        cat_filter = f2.multiselect("Category", all_cats, default=all_cats)
-        months = analytics.all_months(df, pad_current=False)
-        month_filter = f3.multiselect("Month", months, default=months)
-
-        shown = df[
-            df["type"].isin(type_filter) & df["category"].isin(cat_filter) & df["month"].isin(month_filter)
-        ]
-        display = shown.copy()
-        display["date"] = display["date"].dt.strftime("%Y-%m-%d")
-        st.caption(f"{len(display)} transaction(s) — total ${shown['amount'].sum():,.2f}")
+        weekly_table["Over/Under"] = weekly_table["amount"] - weekly_table["Goal"]
         st.dataframe(
-            display[["id", "date", "type", "category", "description", "amount"]],
+            weekly_table[["Week", "amount", "Goal", "Over/Under"]]
+            .rename(columns={"amount": "Spent"})
+            .sort_values("Week", ascending=False)
+            .style.format({"Spent": "${:,.2f}", "Goal": "${:,.2f}", "Over/Under": "${:,.2f}"}),
             use_container_width=True,
             hide_index=True,
         )
 
-        st.divider()
-        st.subheader("Delete a transaction")
-        if not shown.empty:
-            to_delete = st.selectbox(
-                "Select by ID",
-                shown["id"],
-                format_func=lambda i: f"#{i} — {shown.loc[shown['id'] == i, 'category'].values[0]} "
-                f"(${shown.loc[shown['id'] == i, 'amount'].values[0]:,.2f})",
-            )
-            if st.button("Delete selected transaction", type="primary"):
-                db.delete_transaction(int(to_delete))
-                st.success("Deleted.")
-                st.rerun()
+# ========================================================================= Explore
+elif page == "🔍 Explore":
+    months = analytics.all_months(df)
+    default_index = months.index(CURRENT_MONTH) if CURRENT_MONTH in months else len(months) - 1
+    selected_month = st.selectbox("Month", months, index=default_index)
+    month_df = df[df["month"] == selected_month] if not df.empty else df
 
-# =================================================================== Master Table
-elif page == "Master Table":
-    st.subheader("Month-by-month breakdown")
-    if df.empty:
-        st.info("No transactions yet — this table fills in as you log income and expenses.")
+    f1, f2 = st.columns(2)
+    all_cats = sorted(month_df.loc[month_df["type"] == "expense", "category"].unique()) if not month_df.empty else []
+    cat_filter = f1.multiselect("Category (leave empty for all)", all_cats)
+    group_filter = f2.multiselect("Group (leave empty for all)", db.GROUP_NAMES)
+
+    income_total = month_df.loc[month_df["type"] == "income", "amount"].sum()
+    expense_filtered = month_df[month_df["type"] == "expense"]
+    if group_filter:
+        expense_filtered = expense_filtered[expense_filtered["category"].map(groups).isin(group_filter)]
+    if cat_filter:
+        expense_filtered = expense_filtered[expense_filtered["category"].isin(cat_filter)]
+
+    breakdown = analytics.group_breakdown(expense_filtered, groups)
+    expenses = breakdown["Needs"] + breakdown["Wants"] + breakdown["Donations"]
+    has_filter = bool(group_filter) or bool(cat_filter)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Income", f"${income_total:,.2f}")
+    c2.metric("Expenses" + (" (filtered)" if has_filter else ""), f"${expenses:,.2f}")
+    c3.metric("Net" + (" (filtered)" if has_filter else ""), f"${income_total - breakdown.sum():,.2f}")
+    c4.metric("To Savings", f"${breakdown['Savings']:,.2f}")
+
+    st.divider()
+    left, right = st.columns(2)
+    with left:
+        st.subheader("Spending by category")
+        if expense_filtered.empty:
+            st.info("No expenses match this filter.")
+        else:
+            by_cat = expense_filtered.groupby("category")["amount"].sum().sort_values(ascending=False)
+            st.bar_chart(by_cat)
+    with right:
+        st.subheader("Needs / Wants / Savings / Donations")
+        components.percentage_bar(breakdown.to_dict())
+
+    st.divider()
+    st.subheader("Transactions in this view")
+    table_df = expense_filtered if has_filter else month_df
+    if table_df.empty:
+        st.info("No transactions match this filter.")
     else:
-        st.markdown("#### Summary")
-        summary = analytics.monthly_summary(df, groups).T
-        st.dataframe(summary.style.format("${:,.2f}"), use_container_width=True)
-
-        st.markdown("#### Expenses by category")
-        expense_pivot = analytics.category_month_pivot(df, "expense")
-        if expense_pivot.empty:
-            st.info("No expenses recorded yet.")
-        else:
-            st.dataframe(expense_pivot.style.format("${:,.2f}"), use_container_width=True)
-
-        st.markdown("#### Income by category")
-        income_pivot = analytics.category_month_pivot(df, "income")
-        if income_pivot.empty:
-            st.info("No income recorded yet.")
-        else:
-            st.dataframe(income_pivot.style.format("${:,.2f}"), use_container_width=True)
-
-    st.caption(
-        "This table covers every month you have data for — past or future — as soon as you log a transaction "
-        "in it."
-    )
+        display = table_df.copy()
+        display["date"] = display["date"].dt.strftime("%Y-%m-%d")
+        st.dataframe(
+            display[["date", "type", "category", "description", "amount"]].sort_values("date", ascending=False),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 # =========================================================================== Budget
-elif page == "Budget":
+elif page == "🎯 Budget":
     st.subheader("Set a monthly budget")
-    with st.form("set_budget", clear_on_submit=True):
-        c1, c2 = st.columns(2)
-        category = c1.selectbox("Category", db.EXPENSE_CATEGORIES)
-        limit = c2.number_input("Monthly limit", min_value=0.0, step=10.0, format="%.2f")
-        if st.form_submit_button("Save budget"):
-            db.set_budget(category, limit)
-            st.success(f"Budget set: {category} → ${limit:,.2f}/month")
-            st.rerun()
+    expense_cats = db.category_names("expense")
+    if not expense_cats:
+        st.warning("No expense categories yet — add one on the Settings page first.")
+    else:
+        with st.form("set_budget", clear_on_submit=True):
+            c1, c2 = st.columns(2)
+            category = c1.selectbox("Category", expense_cats)
+            limit = c2.number_input("Monthly limit", min_value=0.0, step=10.0, format="%.2f")
+            if st.form_submit_button("Save budget"):
+                db.set_budget(category, limit)
+                st.success(f"Budget set: {category} → ${limit:,.2f}/month")
+                st.rerun()
 
     st.divider()
     st.subheader("Budget vs. actual")
     months = analytics.all_months(df)
     default_index = months.index(CURRENT_MONTH) if CURRENT_MONTH in months else len(months) - 1
-    selected_month = st.selectbox("Month", months, index=default_index)
+    selected_month = st.selectbox("Month", months, index=default_index, key="budget_month")
     budgets = db.get_budgets()
 
     if not budgets:
@@ -222,26 +221,30 @@ elif page == "Budget":
         month_df = df[df["month"] == selected_month] if not df.empty else df
         spent_by_cat = (
             month_df[month_df["type"] == "expense"].groupby("category")["amount"].sum()
-            if not month_df.empty
-            else pd.Series(dtype=float)
+            if not month_df.empty else pd.Series(dtype=float)
         )
         rows = []
         for b in budgets:
             category, limit = b["category"], b["monthly_limit"]
             spent = float(spent_by_cat.get(category, 0.0))
-            remaining = limit - spent
             pct = (spent / limit) if limit > 0 else 0.0
-            avg3 = analytics.three_month_avg(df, category, selected_month)
             rows.append(
                 {
-                    "Category": category,
-                    "Budget": limit,
-                    "Spent": spent,
-                    "Remaining": remaining,
-                    "% Used": pct,
-                    "3-Month Avg": avg3,
+                    "Category": category, "Budget": limit, "Spent": spent, "Remaining": limit - spent,
+                    "% Used": pct, "3-Month Avg": analytics.three_month_avg(df, category, selected_month),
                 }
             )
+        rows.sort(key=lambda r: -r["% Used"])
+
+        for row in rows:
+            st.write(
+                f"{components.status_badge(row['% Used'])} **{row['Category']}** — "
+                f"${row['Spent']:,.2f} / ${row['Budget']:,.2f} ({row['% Used']:.0%})  ·  "
+                f"3-mo avg ${row['3-Month Avg']:,.2f}"
+            )
+            components.colored_progress(row["% Used"])
+
+        st.divider()
         table = pd.DataFrame(rows).set_index("Category")
         st.dataframe(
             table.style.format(
@@ -250,9 +253,6 @@ elif page == "Budget":
             ),
             use_container_width=True,
         )
-        for _, row in table.reset_index().iterrows():
-            st.write(f"**{row['Category']}** — ${row['Spent']:,.2f} / ${row['Budget']:,.2f}")
-            st.progress(min(row["% Used"], 1.0))
 
         remove_cat = st.selectbox("Remove a budget", [b["category"] for b in budgets])
         if st.button("Remove budget"):
@@ -260,30 +260,8 @@ elif page == "Budget":
             st.success("Removed.")
             st.rerun()
 
-    st.divider()
-    st.subheader("Weekly spending goal")
-    st.caption("Used on the Dashboard's weekly chart. Excludes Savings/Investments and Donations.")
-    current_goal = float(db.get_setting("weekly_spending_goal", "400"))
-    new_goal = st.number_input("Weekly goal", min_value=0.0, step=10.0, value=current_goal, format="%.2f")
-    if st.button("Save weekly goal"):
-        db.set_setting("weekly_spending_goal", str(new_goal))
-        st.success("Saved.")
-        st.rerun()
-
-    st.divider()
-    st.subheader("Category groups (Needs / Wants / Savings & Donations)")
-    st.caption("Used for the Needs/Wants/Savings breakdown on the Dashboard and Master Table.")
-    for category in db.EXPENSE_CATEGORIES:
-        current_group = groups.get(category, "Wants")
-        new_group = st.selectbox(
-            category, db.GROUP_NAMES, index=db.GROUP_NAMES.index(current_group), key=f"group_{category}"
-        )
-        if new_group != current_group:
-            db.set_category_group(category, new_group)
-            st.rerun()
-
 # ========================================================================== Savings
-elif page == "Savings":
+elif page == "🏦 Savings":
     st.subheader("Savings goals")
     goals = db.get_savings_goals()
 
@@ -299,12 +277,15 @@ elif page == "Savings":
         st.divider()
 
     st.subheader("Add a contribution")
-    if goals:
+    savings_categories = [c for c, g in groups.items() if g == "Savings"]
+    if goals and savings_categories:
         with st.form("contribute", clear_on_submit=True):
             c1, c2 = st.columns(2)
             goal_name = c1.selectbox("Goal", [g["name"] for g in goals])
             amount = c2.number_input("Amount", min_value=0.0, step=10.0, format="%.2f")
-            date = st.date_input("Date", value=dt.date.today())
+            c3, c4 = st.columns(2)
+            category = c3.selectbox("Category", savings_categories)
+            date = c4.date_input("Date", value=dt.date.today())
             description = st.text_input("Description (optional)")
             if st.form_submit_button("Add contribution"):
                 if amount <= 0:
@@ -312,11 +293,12 @@ elif page == "Savings":
                 else:
                     goal_id = next(g["id"] for g in goals if g["name"] == goal_name)
                     db.add_transaction(
-                        date.isoformat(), "expense", "Savings/Investments", description or goal_name,
-                        amount, goal_id,
+                        date.isoformat(), "expense", category, description or goal_name, amount, goal_id,
                     )
                     st.success(f"Added ${amount:,.2f} to {goal_name}")
                     st.rerun()
+    elif not savings_categories:
+        st.caption("No 'Savings' group category exists yet — add or assign one on the Settings page.")
     else:
         st.caption("Add a goal first to log contributions toward it.")
 
@@ -348,3 +330,203 @@ elif page == "Savings":
             db.delete_savings_goal(goal_id)
             st.success("Removed.")
             st.rerun()
+
+# ===================================================================== Transactions
+elif page == "🧾 Transactions":
+    st.subheader("All transactions")
+    if df.empty:
+        st.info("No transactions yet. Add one from the 'Add Transaction' page.")
+    else:
+        f1, f2, f3 = st.columns([1, 1.4, 1.6])
+        type_choice = f1.radio("Type", ["All", "Income", "Expense"], horizontal=True)
+        min_date, max_date = df["date"].min().date(), df["date"].max().date()
+        date_range = f2.date_input("Date range", value=(min_date, max_date), min_value=min_date, max_value=max_date)
+        search = f3.text_input("Search category or description")
+
+        f4, f5 = st.columns(2)
+        cat_filter = f4.multiselect("Category (leave empty = all)", sorted(df["category"].unique()))
+        group_filter = f5.multiselect("Group (leave empty = all, expenses only)", db.GROUP_NAMES)
+
+        filtered = df.copy()
+        if type_choice != "All":
+            filtered = filtered[filtered["type"] == type_choice.lower()]
+        if isinstance(date_range, tuple) and len(date_range) == 2:
+            start, end = date_range
+            filtered = filtered[(filtered["date"].dt.date >= start) & (filtered["date"].dt.date <= end)]
+        if search:
+            s = search.lower()
+            filtered = filtered[
+                filtered["description"].fillna("").str.lower().str.contains(s)
+                | filtered["category"].str.lower().str.contains(s)
+            ]
+        if cat_filter:
+            filtered = filtered[filtered["category"].isin(cat_filter)]
+        if group_filter:
+            filtered = filtered[(filtered["type"] == "expense") & (filtered["category"].map(groups).isin(group_filter))]
+
+        filtered = filtered.sort_values(["date", "id"], ascending=[False, False])
+        st.caption(f"{len(filtered)} transaction(s) — total ${filtered['amount'].sum():,.2f}")
+
+        # Pending-delete confirmation, shown above the table so it's never missed.
+        pending_id = st.session_state.get("pending_delete_id")
+        if pending_id is not None:
+            match = df[df["id"] == pending_id]
+            if not match.empty:
+                r = match.iloc[0]
+                st.warning(
+                    f"Delete transaction #{pending_id}: {r['category']} — ${r['amount']:,.2f} "
+                    f"on {r['date'].strftime('%Y-%m-%d')}? This can't be undone."
+                )
+                cc1, cc2 = st.columns([1, 4])
+                if cc1.button("Yes, delete", type="primary"):
+                    db.delete_transaction(int(pending_id))
+                    st.session_state.pending_delete_id = None
+                    st.success("Deleted.")
+                    st.rerun()
+                if cc2.button("Cancel"):
+                    st.session_state.pending_delete_id = None
+                    st.rerun()
+            else:
+                st.session_state.pending_delete_id = None
+
+        PAGE_SIZE = 20
+        total_pages = max(1, -(-len(filtered) // PAGE_SIZE))
+        st.session_state.setdefault("txn_page", 1)
+        st.session_state.txn_page = min(st.session_state.txn_page, total_pages)
+
+        pcol1, pcol2, pcol3 = st.columns([1, 2, 1])
+        if pcol1.button("◀ Prev", disabled=st.session_state.txn_page <= 1):
+            st.session_state.txn_page -= 1
+            st.rerun()
+        pcol2.markdown(
+            f"<div style='text-align:center;padding-top:6px;'>Page {st.session_state.txn_page} of {total_pages}</div>",
+            unsafe_allow_html=True,
+        )
+        if pcol3.button("Next ▶", disabled=st.session_state.txn_page >= total_pages):
+            st.session_state.txn_page += 1
+            st.rerun()
+
+        start_i = (st.session_state.txn_page - 1) * PAGE_SIZE
+        page_df = filtered.iloc[start_i : start_i + PAGE_SIZE]
+
+        header = st.columns([0.6, 1, 0.8, 1.3, 2, 1, 0.6])
+        for col, label in zip(header, ["ID", "Date", "Type", "Category", "Description", "Amount", ""]):
+            col.markdown(f"**{label}**")
+
+        for _, row in page_df.iterrows():
+            c = st.columns([0.6, 1, 0.8, 1.3, 2, 1, 0.6])
+            c[0].write(str(row["id"]))
+            c[1].write(row["date"].strftime("%Y-%m-%d"))
+            c[2].write(row["type"])
+            c[3].write(row["category"])
+            c[4].write(row["description"] or "")
+            c[5].write(f"${row['amount']:,.2f}")
+            if c[6].button("🗑️", key=f"del_{row['id']}"):
+                st.session_state.pending_delete_id = int(row["id"])
+                st.rerun()
+
+# ================================================================ Add Transaction
+elif page == "➕ Add Transaction":
+    st.subheader("Add a transaction")
+    type_ = st.radio("Type", ["expense", "income"], horizontal=True)
+    category_options = db.category_names(type_)
+
+    if not category_options:
+        st.warning(f"No {type_} categories yet. Add one on the Settings page first.")
+    else:
+        with st.form("add_transaction", clear_on_submit=True):
+            c1, c2 = st.columns(2)
+            date = c1.date_input("Date", value=dt.date.today())
+            category = c2.selectbox("Category", category_options)
+
+            goal_id = None
+            if type_ == "expense" and groups.get(category) == "Savings":
+                goals = db.get_savings_goals()
+                if goals:
+                    goal_choice = st.selectbox(
+                        "Contributing to which savings goal? (optional)",
+                        ["None"] + [g["name"] for g in goals],
+                    )
+                    if goal_choice != "None":
+                        goal_id = next(g["id"] for g in goals if g["name"] == goal_choice)
+                else:
+                    st.caption("No savings goals set up yet — add one on the Savings page to link contributions.")
+
+            description = st.text_input("Description (optional)")
+            amount = st.number_input("Amount", min_value=0.0, step=1.0, format="%.2f")
+            submitted = st.form_submit_button("Add")
+
+            if submitted:
+                if amount <= 0:
+                    st.error("Amount must be greater than zero.")
+                else:
+                    db.add_transaction(date.isoformat(), type_, category, description, amount, goal_id)
+                    st.success(f"Added {type_}: ${amount:,.2f} ({category})")
+                    st.rerun()
+
+# ========================================================================= Settings
+elif page == "⚙️ Settings":
+    st.subheader("Categories")
+    st.caption(
+        "These populate the Add Transaction dropdowns. Removing a category doesn't change past "
+        "transactions — they keep their original category text."
+    )
+    cats = db.get_categories()
+    if cats:
+        table = pd.DataFrame([dict(c) for c in cats])
+        table["group_name"] = table["group_name"].fillna("—")
+        st.dataframe(
+            table.rename(columns={"name": "Category", "type": "Type", "group_name": "Group"}),
+            use_container_width=True, hide_index=True,
+        )
+
+    st.markdown("#### Add a category")
+    with st.form("add_category", clear_on_submit=True):
+        name = st.text_input("Category name")
+        c1, c2 = st.columns(2)
+        new_type = c1.selectbox("Type", ["expense", "income"])
+        new_group = c2.selectbox("Group (expense only)", db.GROUP_NAMES)
+        if st.form_submit_button("Add category"):
+            existing_names = {c["name"] for c in cats}
+            if not name.strip():
+                st.error("Please name the category.")
+            elif name.strip() in existing_names:
+                st.error("That category already exists.")
+            else:
+                db.add_category(name.strip(), new_type, new_group if new_type == "expense" else None)
+                st.success(f"Added category: {name.strip()}")
+                st.rerun()
+
+    expense_cats = [c for c in cats if c["type"] == "expense"]
+    if expense_cats:
+        st.markdown("#### Edit a category's group")
+        c1, c2 = st.columns(2)
+        edit_cat = c1.selectbox("Category", [c["name"] for c in expense_cats], key="edit_cat_select")
+        current_group = next(c["group_name"] for c in expense_cats if c["name"] == edit_cat) or "Wants"
+        new_group_val = c2.selectbox(
+            "Group", db.GROUP_NAMES,
+            index=db.GROUP_NAMES.index(current_group) if current_group in db.GROUP_NAMES else 0,
+            key="edit_cat_group",
+        )
+        if st.button("Update group"):
+            db.update_category_group(edit_cat, new_group_val)
+            st.success("Updated.")
+            st.rerun()
+
+    if cats:
+        st.markdown("#### Remove a category")
+        remove_name = st.selectbox("Category to remove", [c["name"] for c in cats], key="remove_cat_select")
+        if st.button("Remove category", type="primary"):
+            db.delete_category(remove_name)
+            st.success("Removed.")
+            st.rerun()
+
+    st.divider()
+    st.subheader("Weekly spending goal")
+    st.caption("Used on the Snapshot, Overview, and Explore pages. Excludes Savings and Donations categories.")
+    current_goal = float(db.get_setting("weekly_spending_goal", "400"))
+    new_goal = st.number_input("Weekly goal", min_value=0.0, step=10.0, value=current_goal, format="%.2f")
+    if st.button("Save weekly goal"):
+        db.set_setting("weekly_spending_goal", str(new_goal))
+        st.success("Saved.")
+        st.rerun()

@@ -37,11 +37,14 @@ def category_month_pivot(df: pd.DataFrame, type_: str) -> pd.DataFrame:
 
 
 def monthly_summary(df: pd.DataFrame, groups: dict[str, str]) -> pd.DataFrame:
-    """One row per month: Total Income, Total Needs, Total Wants, Total Savings & Donations, Net."""
+    """One row per month: Total Income, Needs, Wants, Savings, Donations, Expenses, Net Income.
+
+    "Expenses" is Needs + Wants + Donations only — money moved into Savings isn't spent,
+    so it's excluded from the income-vs-expenses comparison (Net Income still accounts for it).
+    """
+    cols = ["Total Income", "Needs", "Wants", "Savings", "Donations", "Expenses", "Net Income"]
     if df.empty:
-        return pd.DataFrame(
-            columns=["Total Income", "Total Needs", "Total Wants", "Total Savings & Donations", "Net Income"]
-        )
+        return pd.DataFrame(columns=cols)
     work = df.copy()
     work["group"] = work["category"].map(groups).fillna("Wants")
     income = work[work["type"] == "income"].groupby("month")["amount"].sum()
@@ -51,13 +54,23 @@ def monthly_summary(df: pd.DataFrame, groups: dict[str, str]) -> pd.DataFrame:
     for g in db.GROUP_NAMES:
         if g not in expense_by_group.columns:
             expense_by_group[g] = 0.0
+
     out = pd.DataFrame(index=sorted(set(income.index) | set(expense_by_group.index)))
     out["Total Income"] = income.reindex(out.index, fill_value=0.0)
-    out["Total Needs"] = expense_by_group["Needs"].reindex(out.index, fill_value=0.0)
-    out["Total Wants"] = expense_by_group["Wants"].reindex(out.index, fill_value=0.0)
-    out["Total Savings & Donations"] = expense_by_group["Savings & Donations"].reindex(out.index, fill_value=0.0)
-    out["Net Income"] = out["Total Income"] - out["Total Needs"] - out["Total Wants"] - out["Total Savings & Donations"]
+    for g in db.GROUP_NAMES:
+        out[g] = expense_by_group[g].reindex(out.index, fill_value=0.0)
+    out["Expenses"] = out["Needs"] + out["Wants"] + out["Donations"]
+    out["Net Income"] = out["Total Income"] - out["Needs"] - out["Wants"] - out["Savings"] - out["Donations"]
     return out.sort_index()
+
+
+def group_breakdown(df: pd.DataFrame, groups: dict[str, str]) -> pd.Series:
+    """Total expense amount per Needs/Wants/Savings/Donations group for whatever rows are passed in."""
+    expense_df = df[df["type"] == "expense"].copy()
+    if expense_df.empty:
+        return pd.Series(0.0, index=db.GROUP_NAMES)
+    expense_df["group"] = expense_df["category"].map(groups).fillna("Wants")
+    return expense_df.groupby("group")["amount"].sum().reindex(db.GROUP_NAMES, fill_value=0.0)
 
 
 def three_month_avg(df: pd.DataFrame, category: str, month: str) -> float:
@@ -72,14 +85,32 @@ def three_month_avg(df: pd.DataFrame, category: str, month: str) -> float:
     return subset.groupby("month")["amount"].sum().reindex(prior_months, fill_value=0.0).mean()
 
 
-def weekly_totals(df: pd.DataFrame, weeks: int = 12) -> pd.DataFrame:
-    """Last `weeks` calendar weeks (Mon-Sun) of discretionary spend (excludes Savings/Investments & Donations)."""
+def weekly_totals(df: pd.DataFrame, weeks: int | None = 12, all_time: bool = False) -> pd.DataFrame:
+    """Weekly (Mon-Sun) discretionary spend, excluding Savings and Donations.
+
+    Pass `weeks` for a rolling recent window, or `all_time=True` to cover every week from the
+    first transaction through the current week.
+    """
     today = dt.date.today()
     this_monday = today - dt.timedelta(days=today.weekday())
-    week_starts = [this_monday - dt.timedelta(weeks=i) for i in range(weeks - 1, -1, -1)]
+    excluded_groups = {"Savings", "Donations"}
+    groups = db.get_category_groups()
+
+    if all_time and not df.empty:
+        first_date = df["date"].min().date()
+        first_monday = first_date - dt.timedelta(days=first_date.weekday())
+        n_weeks = (this_monday - first_monday).days // 7 + 1
+        week_starts = [first_monday + dt.timedelta(weeks=i) for i in range(n_weeks)]
+    else:
+        n = weeks or 12
+        week_starts = [this_monday - dt.timedelta(weeks=i) for i in range(n - 1, -1, -1)]
+
+    spend = df.copy()
+    if not spend.empty:
+        spend["group"] = spend["category"].map(groups).fillna("Wants")
+        spend = spend[(spend["type"] == "expense") & (~spend["group"].isin(excluded_groups))]
+
     rows = []
-    excluded = {"Savings/Investments", "Donations"}
-    spend = df[(df["type"] == "expense") & (~df["category"].isin(excluded))] if not df.empty else df
     for start in week_starts:
         end = start + dt.timedelta(days=6)
         if spend.empty:
@@ -87,7 +118,7 @@ def weekly_totals(df: pd.DataFrame, weeks: int = 12) -> pd.DataFrame:
         else:
             mask = (spend["date"].dt.date >= start) & (spend["date"].dt.date <= end)
             total = spend.loc[mask, "amount"].sum()
-        rows.append({"week_start": pd.Timestamp(start), "amount": total})
+        rows.append({"week_start": pd.Timestamp(start), "week_end": pd.Timestamp(end), "amount": total})
     return pd.DataFrame(rows)
 
 

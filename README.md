@@ -3,19 +3,26 @@
 A personal budgeting app built with [Streamlit](https://streamlit.io) and SQLite, modeled on a
 prior Excel-based budget (transactions, income, monthly pivots, savings goals, and budgets).
 
-## Features
+## Pages
 
-- **Transactions** — log expenses with date, category, and description; browse/filter/delete
-- **Income** — log income by category (Salary, Side Income, Government, Other Income)
-- **Master Table** — month-by-month breakdown (income, Needs/Wants/Savings & Donations totals,
-  net income, and per-category pivots) for every month you have data in — past or future, no
-  fixed date range
-- **Dashboard** — spending by category, Needs/Wants/Savings breakdown, income vs. expense trend,
-  and weekly spending vs. a configurable weekly goal
-- **Budget** — set a monthly budget per expense category; track spent, remaining, % used, and a
-  3-month trailing average; edit which Needs/Wants/Savings & Donations group each category falls in
-- **Savings** — named savings goals (e.g. Emergency Fund, Travel, Car) with a target amount,
-  monthly contribution target, and progress bar; log contributions as linked transactions
+- **📸 Snapshot** — quick overview of the current month: income/expenses/net, budget warnings
+  (🔴 over / 🟡 near limit), this week's spending vs. goal, and a savings mini-summary
+- **📊 Overview** — everything you've logged, unfiltered: income vs. expenses trend, monthly
+  summary (Needs/Wants/Savings/Donations), category pivots, and an all-time weekly breakdown
+- **🔍 Explore** — pick a month and filter by category or Needs/Wants/Savings/Donations group;
+  shows spending by category, a color-coded percentage bar, and the matching transactions
+- **🎯 Budget** — set a monthly budget per expense category; see spent/remaining/% used/3-month
+  average, sorted worst-first with color-coded warning bars
+- **🏦 Savings** — named savings goals with progress bars; log contributions as linked transactions
+- **🧾 Transactions** — browse/search/filter everything, with inline delete (with confirmation)
+  and pagination
+- **➕ Add Transaction** — log income or an expense, categories pulled live from Settings
+- **⚙️ Settings** — manage categories (add/remove, assign Needs/Wants/Savings/Donations group),
+  set the weekly spending goal
+
+Categories are fully user-editable on the Settings page — there's no hardcoded category list.
+"Expenses" in trend charts = Needs + Wants + Donations; Savings contributions are tracked
+separately since that money isn't spent.
 
 ## Getting started
 

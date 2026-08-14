@@ -7,25 +7,25 @@ from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "data" / "budget.db"
 
-EXPENSE_CATEGORIES = [
-    "Cell Phone", "Internet", "Loans", "Insurance", "Gas", "Presto", "Uber",
-    "Groceries", "Eating Out", "Tims/Coffee", "Subscriptions", "Dates",
-    "Activities", "Gym/Fitness", "Clothing/Personal Care", "Travel", "Gifts",
-    "Donations", "Miscellaneous", "Savings/Investments",
-]
+GROUP_NAMES = ["Needs", "Wants", "Savings", "Donations"]
+GROUP_COLORS = {
+    "Needs": "#2563eb",      # blue
+    "Wants": "#f59e0b",      # amber
+    "Savings": "#16a34a",    # green
+    "Donations": "#9333ea",  # purple
+}
 
-INCOME_CATEGORIES = ["Salary", "Side Income", "Government", "Other Income"]
-
-# Default Needs / Wants / Savings & Donations grouping, editable by the user.
-DEFAULT_GROUPS = {
+# Seed data used only the first time the database is created (or to backfill any
+# category found in old transaction data that isn't in the categories table yet).
+_SEED_EXPENSE_GROUPS = {
     "Cell Phone": "Needs", "Internet": "Needs", "Loans": "Needs", "Insurance": "Needs",
     "Gas": "Needs", "Presto": "Needs", "Groceries": "Needs", "Miscellaneous": "Needs",
     "Uber": "Wants", "Eating Out": "Wants", "Tims/Coffee": "Wants", "Subscriptions": "Wants",
     "Dates": "Wants", "Activities": "Wants", "Gym/Fitness": "Wants",
     "Clothing/Personal Care": "Wants", "Travel": "Wants", "Gifts": "Wants",
-    "Donations": "Savings & Donations", "Savings/Investments": "Savings & Donations",
+    "Savings/Investments": "Savings", "Donations": "Donations",
 }
-GROUP_NAMES = ["Needs", "Wants", "Savings & Donations"]
+_SEED_INCOME_CATEGORIES = ["Salary", "Side Income", "Government", "Other Income"]
 
 DEFAULT_SETTINGS = {
     "weekly_spending_goal": "400",
@@ -82,9 +82,10 @@ def init_db() -> None:
         )
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS category_groups (
-                category TEXT PRIMARY KEY,
-                group_name TEXT NOT NULL CHECK (group_name IN ('Needs', 'Wants', 'Savings & Donations'))
+            CREATE TABLE IF NOT EXISTS categories (
+                name TEXT PRIMARY KEY,
+                type TEXT NOT NULL CHECK (type IN ('income', 'expense')),
+                group_name TEXT CHECK (group_name IN ('Needs', 'Wants', 'Savings', 'Donations'))
             )
             """
         )
@@ -96,14 +97,56 @@ def init_db() -> None:
             )
             """
         )
-        # Seed default category groupings and settings if not already present.
-        existing_groups = {r["category"] for r in conn.execute("SELECT category FROM category_groups")}
-        for category, group_name in DEFAULT_GROUPS.items():
-            if category not in existing_groups:
+
+        # One-time seed of the categories table.
+        has_categories = conn.execute("SELECT COUNT(*) FROM categories").fetchone()[0] > 0
+        if not has_categories:
+            # Carry over any grouping from the old (pre-Settings-page) category_groups
+            # table if it exists, so upgrading doesn't silently reset groupings.
+            old_groups: dict[str, str] = {}
+            try:
+                rows = conn.execute("SELECT category, group_name FROM category_groups").fetchall()
+                for r in rows:
+                    old = r["group_name"]
+                    # Old scheme had a single combined "Savings & Donations" group.
+                    if old == "Savings & Donations":
+                        old_groups[r["category"]] = (
+                            "Donations" if r["category"] == "Donations" else "Savings"
+                        )
+                    else:
+                        old_groups[r["category"]] = old
+            except sqlite3.OperationalError:
+                pass  # no old table, fine
+
+            for category, default_group in _SEED_EXPENSE_GROUPS.items():
                 conn.execute(
-                    "INSERT INTO category_groups (category, group_name) VALUES (?, ?)",
-                    (category, group_name),
+                    "INSERT OR IGNORE INTO categories (name, type, group_name) VALUES (?, 'expense', ?)",
+                    (category, old_groups.get(category, default_group)),
                 )
+            for category in _SEED_INCOME_CATEGORIES:
+                conn.execute(
+                    "INSERT OR IGNORE INTO categories (name, type, group_name) VALUES (?, 'income', NULL)",
+                    (category,),
+                )
+
+        # Backfill: any category already used in transactions but missing from the
+        # categories table (e.g. from data imported before Settings existed).
+        known = {r["name"] for r in conn.execute("SELECT name FROM categories")}
+        used = conn.execute(
+            "SELECT category, type, COUNT(*) as n FROM transactions GROUP BY category, type"
+        ).fetchall()
+        seen_categories = set()
+        for row in used:
+            if row["category"] in seen_categories:
+                continue
+            seen_categories.add(row["category"])
+            if row["category"] not in known:
+                group = "Wants" if row["type"] == "expense" else None
+                conn.execute(
+                    "INSERT OR IGNORE INTO categories (name, type, group_name) VALUES (?, ?, ?)",
+                    (row["category"], row["type"], group),
+                )
+
         existing_settings = {r["key"] for r in conn.execute("SELECT key FROM settings")}
         for key, value in DEFAULT_SETTINGS.items():
             if key not in existing_settings:
@@ -155,22 +198,45 @@ def delete_budget(category: str) -> None:
         conn.execute("DELETE FROM budgets WHERE category = ?", (category,))
 
 
-# --------------------------------------------------------------- category groups
-def get_category_groups() -> dict[str, str]:
+# ------------------------------------------------------------------- categories
+def get_categories(type_: str | None = None) -> list[sqlite3.Row]:
     with get_conn() as conn:
-        rows = conn.execute("SELECT category, group_name FROM category_groups").fetchall()
-    return {r["category"]: r["group_name"] for r in rows}
+        if type_:
+            return conn.execute(
+                "SELECT * FROM categories WHERE type = ? ORDER BY name", (type_,)
+            ).fetchall()
+        return conn.execute("SELECT * FROM categories ORDER BY type, name").fetchall()
 
 
-def set_category_group(category: str, group_name: str) -> None:
+def category_names(type_: str) -> list[str]:
+    return [r["name"] for r in get_categories(type_)]
+
+
+def get_category_groups() -> dict[str, str]:
+    """category name -> group name, expense categories only."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT name, group_name FROM categories WHERE type = 'expense'"
+        ).fetchall()
+    return {r["name"]: (r["group_name"] or "Wants") for r in rows}
+
+
+def add_category(name: str, type_: str, group_name: str | None) -> None:
     with get_conn() as conn:
         conn.execute(
-            """
-            INSERT INTO category_groups (category, group_name) VALUES (?, ?)
-            ON CONFLICT(category) DO UPDATE SET group_name = excluded.group_name
-            """,
-            (category, group_name),
+            "INSERT INTO categories (name, type, group_name) VALUES (?, ?, ?)",
+            (name, type_, group_name if type_ == "expense" else None),
         )
+
+
+def update_category_group(name: str, group_name: str) -> None:
+    with get_conn() as conn:
+        conn.execute("UPDATE categories SET group_name = ? WHERE name = ?", (group_name, name))
+
+
+def delete_category(name: str) -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM categories WHERE name = ?", (name,))
 
 
 # ----------------------------------------------------------------- savings goals

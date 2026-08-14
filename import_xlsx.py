@@ -68,7 +68,7 @@ def import_workbook(path: str) -> None:
     added_budgets = 0
     skipped = []
     ws = wb["Budget Tracking"]
-    known_categories = set(db.EXPENSE_CATEGORIES)
+    known_categories = set(db.category_names("expense"))
     for row in ws.iter_rows(min_row=2, values_only=True):
         category, budget = row[0], row[1]
         if not category or budget is None:
