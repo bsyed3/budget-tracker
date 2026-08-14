@@ -8,12 +8,10 @@ import db
 _FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
 
 
-def contrast_text_color(hex_color: str) -> str:
-    """Black or white, whichever reads better on top of the given background hex color."""
-    h = hex_color.lstrip("#")
-    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-    yiq = (r * 299 + g * 587 + b * 114) / 1000
-    return "#000000" if yiq >= 128 else "#ffffff"
+def theme_text_color() -> str:
+    """White in dark mode, black in light mode -- follows the app's active Streamlit theme
+    (including "Use system setting"), not the specific background it's drawn on."""
+    return "#ffffff" if st.context.theme.type == "dark" else "#000000"
 
 
 def money(x: float) -> str:
@@ -40,7 +38,7 @@ def percentage_bar(breakdown: dict[str, float], colors: dict[str, str] | None = 
             continue
         pct = value / total * 100
         color = colors.get(name, "#94a3b8")
-        text_color = contrast_text_color(color)
+        text_color = theme_text_color()
         segments_html += (
             f'<div title="{name}: ${value:,.2f} ({pct:.0f}%)" '
             f'style="width:{pct:.3f}%;background:{color};height:100%;'
@@ -89,7 +87,7 @@ def status_pill(pct: float) -> str:
 
 def tag(label: str, color: str) -> str:
     """A small colored badge (HTML) with an arbitrary label/color — same styling as status_pill."""
-    text_color = contrast_text_color(color)
+    text_color = theme_text_color()
     return (
         f'<span style="background:{color};color:{text_color};padding:3px 10px;border-radius:999px;'
         f'font-size:11px;font-weight:700;letter-spacing:.03em;font-family:{_FONT};'
