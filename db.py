@@ -1,6 +1,14 @@
-"""SQLite data layer for the budget tracker."""
+"""SQLite / Turso data layer for the budget tracker.
+
+Uses a local SQLite file by default (unchanged local-dev behavior). If Turso credentials are
+present -- TURSO_DATABASE_URL / TURSO_AUTH_TOKEN as environment variables or Streamlit secrets
+-- it transparently talks to a remote Turso (libSQL) database instead. Same schema, same SQL;
+only the connection underneath differs, via a thin shim so the rest of this module (and every
+caller) is unchanged either way.
+"""
 from __future__ import annotations
 
+import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -32,8 +40,99 @@ DEFAULT_SETTINGS = {
 }
 
 
+# ----------------------------------------------------------------- Turso backend
+def _turso_credentials() -> tuple[str | None, str | None]:
+    url = os.environ.get("TURSO_DATABASE_URL")
+    token = os.environ.get("TURSO_AUTH_TOKEN")
+    if not url:
+        try:
+            import streamlit as st
+            url = url or st.secrets.get("TURSO_DATABASE_URL")
+            token = token or st.secrets.get("TURSO_AUTH_TOKEN")
+        except Exception:
+            pass
+    return url, token
+
+
+class _TursoRow:
+    """Matches sqlite3.Row's dual access: row[0] (positional) and row["col"] (named), plus
+    dict(row) support (via .keys() + __getitem__, which the dict() constructor uses)."""
+
+    def __init__(self, columns, values):
+        self._columns = columns
+        self._values = values
+        self._map = dict(zip(columns, values))
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self._values[key]
+        return self._map[key]
+
+    def get(self, key, default=None):
+        return self._map.get(key, default)
+
+    def keys(self):
+        return self._columns
+
+    def __iter__(self):
+        return iter(self._values)
+
+    def __len__(self):
+        return len(self._values)
+
+    def __repr__(self):
+        return f"_TursoRow({self._map!r})"
+
+
+class _TursoCursorShim:
+    """Makes a libsql_client ResultSet look like a sqlite3 cursor: .fetchall()/.fetchone()."""
+
+    def __init__(self, result_set):
+        columns = result_set.columns
+        self._rows = [_TursoRow(columns, row.astuple()) for row in result_set.rows]
+        self.lastrowid = result_set.last_insert_rowid
+
+    def fetchall(self):
+        return self._rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+class _TursoConnShim:
+    """Makes a libsql_client ClientSync look like a sqlite3 connection for this module's
+    execute()-only usage pattern."""
+
+    def __init__(self, client):
+        self._client = client
+
+    def execute(self, sql, params=()):
+        result = self._client.execute(sql, list(params) if params else None)
+        return _TursoCursorShim(result)
+
+
+_turso_client = None
+
+
+def _get_turso_client():
+    global _turso_client
+    if _turso_client is None:
+        import libsql_client
+        url, token = _turso_credentials()
+        _turso_client = libsql_client.create_client_sync(url=url, auth_token=token)
+    return _turso_client
+
+
 @contextmanager
 def get_conn():
+    url, _ = _turso_credentials()
+    if url:
+        conn = _TursoConnShim(_get_turso_client())
+        yield conn
+        return
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -98,7 +197,9 @@ def init_db() -> None:
         )
         # Link generated transactions back to the rule that created them (nullable — manual
         # transactions and anything created before this feature existed just have NULL here).
-        txn_cols = [r["name"] for r in conn.execute("PRAGMA table_info(transactions)")]
+        # Uses the pragma_table_info() table-valued function (portable SQL) rather than a bare
+        # PRAGMA statement, since the latter isn't guaranteed over every remote SQL protocol.
+        txn_cols = [r["name"] for r in conn.execute("SELECT name FROM pragma_table_info('transactions')")]
         if "recurring_id" not in txn_cols:
             conn.execute(
                 "ALTER TABLE transactions ADD COLUMN recurring_id "
@@ -143,8 +244,8 @@ def init_db() -> None:
                         )
                     else:
                         old_groups[r["category"]] = old
-            except sqlite3.OperationalError:
-                pass  # no old table, fine
+            except Exception:
+                pass  # no old table (or backend doesn't have it), fine
 
             for category, default_group in _SEED_EXPENSE_GROUPS.items():
                 conn.execute(
@@ -212,7 +313,7 @@ def delete_transaction(transaction_id: int) -> None:
         conn.execute("DELETE FROM transactions WHERE id = ?", (transaction_id,))
 
 
-def get_transactions() -> list[sqlite3.Row]:
+def get_transactions() -> list:
     with get_conn() as conn:
         return conn.execute("SELECT * FROM transactions ORDER BY date DESC, id DESC").fetchall()
 
@@ -229,7 +330,7 @@ def set_budget(category: str, monthly_limit: float) -> None:
         )
 
 
-def get_budgets() -> list[sqlite3.Row]:
+def get_budgets() -> list:
     with get_conn() as conn:
         return conn.execute("SELECT * FROM budgets ORDER BY category").fetchall()
 
@@ -240,7 +341,7 @@ def delete_budget(category: str) -> None:
 
 
 # ------------------------------------------------------------------- categories
-def get_categories(type_: str | None = None) -> list[sqlite3.Row]:
+def get_categories(type_: str | None = None) -> list:
     with get_conn() as conn:
         if type_:
             return conn.execute(
@@ -349,7 +450,7 @@ def delete_recurring(rule_id: int) -> None:
         conn.execute("DELETE FROM recurring_transactions WHERE id = ?", (rule_id,))
 
 
-def get_recurring_rules() -> list[sqlite3.Row]:
+def get_recurring_rules() -> list:
     with get_conn() as conn:
         return conn.execute("SELECT * FROM recurring_transactions ORDER BY next_due_date").fetchall()
 
@@ -379,7 +480,7 @@ def delete_savings_goal(goal_id: int) -> None:
         conn.execute("DELETE FROM savings_goals WHERE id = ?", (goal_id,))
 
 
-def get_savings_goals() -> list[sqlite3.Row]:
+def get_savings_goals() -> list:
     with get_conn() as conn:
         return conn.execute("SELECT * FROM savings_goals ORDER BY name").fetchall()
 

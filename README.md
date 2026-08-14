@@ -53,7 +53,36 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Data is stored locally in `data/budget.db` (SQLite), which is git-ignored.
+By default, data is stored locally in `data/budget.db` (SQLite), which is git-ignored.
+
+## Cloud database (Turso)
+
+`db.py` transparently switches from the local SQLite file to a remote [Turso](https://turso.tech)
+(libSQL) database when `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are set — as environment
+variables, or as Streamlit secrets (`.streamlit/secrets.toml` locally, or the "Secrets" panel on
+Streamlit Community Cloud). This is what makes the deployed version persist data properly instead
+of losing it on every restart. Same schema, same SQL, same code either way — only the connection
+underneath differs (see `_TursoConnShim`/`_TursoRow` in `db.py`).
+
+`.streamlit/secrets.toml` is git-ignored — never commit real credentials there.
+
+To move existing local data into Turso (wipes and replaces whatever's currently in the remote
+database, so only run this against a fresh or disposable Turso database):
+
+```bash
+python migrate_to_turso.py
+```
+
+(with `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` set in your shell first.)
+
+## Deploying (Streamlit Community Cloud)
+
+1. Push this repo to GitHub (already done — [github.com/bsyed3/budget-tracker](https://github.com/bsyed3/budget-tracker))
+2. On [share.streamlit.io](https://share.streamlit.io), sign in with GitHub and deploy this repo,
+   main file `app.py`
+3. In the app's Settings → Secrets, add `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN`
+4. In the app's Settings → Sharing, restrict viewers to just your own email so it isn't publicly
+   browsable
 
 ## Importing historical data
 

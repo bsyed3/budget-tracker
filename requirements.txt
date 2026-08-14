@@ -2,3 +2,4 @@ streamlit>=1.38
 pandas>=2.2
 openpyxl>=3.1
 altair>=5.0
+libsql-client>=0.3
