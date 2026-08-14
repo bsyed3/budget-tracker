@@ -42,16 +42,22 @@ st.markdown(
     @media (hover: none) {
         div[class*="st-key-hoverrow_"] div[data-testid="stPopover"] { visibility: visible; }
     }
-    /* Keep these table-like rows side-by-side in columns instead of Streamlit's default of
-       stacking them vertically on narrow screens; scroll horizontally if a row is too tight. */
+    /* Keep each row's cells side-by-side instead of Streamlit's default of stacking them on
+       narrow screens. Scrolling itself happens once, on the outer "tablewrap_" container that
+       wraps the whole table (header + every row) -- so everything scrolls together and stays
+       column-aligned, instead of each row scrolling independently out of sync. */
     div[class*="st-key-hoverrow_"] div[data-testid="stHorizontalBlock"],
     div[class*="st-key-tablehead_"] div[data-testid="stHorizontalBlock"] {
         flex-wrap: nowrap !important;
-        overflow-x: auto !important;
+        width: max-content !important;
+        min-width: 100% !important;
     }
     div[class*="st-key-hoverrow_"] div[data-testid="stColumn"],
     div[class*="st-key-tablehead_"] div[data-testid="stColumn"] {
         min-width: fit-content !important;
+    }
+    div[class*="st-key-tablewrap_"] {
+        overflow-x: auto !important;
     }
     </style>
     """,
@@ -687,30 +693,31 @@ elif page == "Transactions":
         start_i = (st.session_state.txn_page - 1) * PAGE_SIZE
         page_df = filtered.iloc[start_i : start_i + PAGE_SIZE]
 
-        with st.container(key="tablehead_txn"):
-            header = st.columns([0.6, 1, 0.8, 1.3, 2, 1, 0.5])
-            for col, label in zip(header, ["ID", "Date", "Type", "Category", "Description", "Amount", ""]):
-                col.markdown(f"**{label}**")
+        with st.container(key="tablewrap_txn"):
+            with st.container(key="tablehead_txn"):
+                header = st.columns([0.6, 1, 0.8, 1.3, 2, 1, 0.5])
+                for col, label in zip(header, ["ID", "Date", "Type", "Category", "Description", "Amount", ""]):
+                    col.markdown(f"**{label}**")
 
-        for i, (_, row) in enumerate(page_df.iterrows()):
-            with st.container(key=f"hoverrow_txn_{i}"):
-                c = st.columns([0.6, 1, 0.8, 1.3, 2, 1, 0.5])
-                c[0].write(str(row["id"]))
-                c[1].write(row["date"].strftime("%Y-%m-%d"))
-                c[2].write(row["type"].capitalize())
-                c[3].write(row["category"])
-                desc = row["description"] or ""
-                if pd.notna(row.get("recurring_id")):
-                    c[4].markdown(f"{desc}  {components.tag('AUTO', '#64748b')}", unsafe_allow_html=True)
-                else:
-                    c[4].write(desc)
-                c[5].write(money(row["amount"]))
-                with c[6]:
-                    with st.popover("⋮", key=f"txn_pop_{row['id']}"):
-                        if st.button("Edit", key=f"txn_edit_{row['id']}", use_container_width=True):
-                            edit_transaction_dialog(row)
-                        if st.button("Delete", key=f"txn_del_{row['id']}", use_container_width=True):
-                            delete_transaction_dialog(row)
+            for i, (_, row) in enumerate(page_df.iterrows()):
+                with st.container(key=f"hoverrow_txn_{i}"):
+                    c = st.columns([0.6, 1, 0.8, 1.3, 2, 1, 0.5])
+                    c[0].write(str(row["id"]))
+                    c[1].write(row["date"].strftime("%Y-%m-%d"))
+                    c[2].write(row["type"].capitalize())
+                    c[3].write(row["category"])
+                    desc = row["description"] or ""
+                    if pd.notna(row.get("recurring_id")):
+                        c[4].markdown(f"{desc}  {components.tag('AUTO', '#64748b')}", unsafe_allow_html=True)
+                    else:
+                        c[4].write(desc)
+                    c[5].write(money(row["amount"]))
+                    with c[6]:
+                        with st.popover("⋮", key=f"txn_pop_{row['id']}"):
+                            if st.button("Edit", key=f"txn_edit_{row['id']}", use_container_width=True):
+                                edit_transaction_dialog(row)
+                            if st.button("Delete", key=f"txn_del_{row['id']}", use_container_width=True):
+                                delete_transaction_dialog(row)
 
 # ========================================================================= Recurring
 elif page == "Recurring Transactions":
@@ -793,32 +800,33 @@ elif page == "Recurring Transactions":
     if not rules:
         st.info("No recurring transactions yet — add one below.")
     else:
-        with st.container(key="tablehead_rec"):
-            header = st.columns([1.4, 1.6, 1.2, 1.4, 0.9, 0.6])
-            for col, label in zip(header, ["Category", "Description", "Amount", "Repeats", "Next Due", ""]):
-                col.markdown(f"**{label}**")
-        for i, rule in enumerate(rules):
-            with st.container(key=f"hoverrow_rec_{i}"):
-                c = st.columns([1.4, 1.6, 1.2, 1.4, 0.9, 0.6])
-                c[0].write(f"{rule['category']} ({rule['type'].capitalize()})")
-                c[1].write(rule["description"] or "")
-                c[2].write(money(rule["amount"]))
-                c[3].write(recurring.FREQUENCY_LABELS[rule["frequency"]])
-                with c[4]:
-                    if rule["active"]:
-                        c[4].write(dt.date.fromisoformat(rule["next_due_date"]).strftime("%b %d, %Y"))
-                    else:
-                        st.markdown(components.tag("PAUSED", "#64748b"), unsafe_allow_html=True)
-                with c[5]:
-                    with st.popover("⋮", key=f"rec_pop_{rule['id']}"):
-                        if st.button("Edit", key=f"rec_edit_{rule['id']}", use_container_width=True):
-                            edit_recurring_dialog(rule)
-                        pause_label = "Resume" if not rule["active"] else "Pause"
-                        if st.button(pause_label, key=f"rec_toggle_{rule['id']}", use_container_width=True):
-                            db.set_recurring_active(rule["id"], not rule["active"])
-                            st.rerun()
-                        if st.button("Delete", key=f"rec_del_{rule['id']}", use_container_width=True):
-                            delete_recurring_dialog(rule)
+        with st.container(key="tablewrap_rec"):
+            with st.container(key="tablehead_rec"):
+                header = st.columns([1.4, 1.6, 1.2, 1.4, 0.9, 0.6])
+                for col, label in zip(header, ["Category", "Description", "Amount", "Repeats", "Next Due", ""]):
+                    col.markdown(f"**{label}**")
+            for i, rule in enumerate(rules):
+                with st.container(key=f"hoverrow_rec_{i}"):
+                    c = st.columns([1.4, 1.6, 1.2, 1.4, 0.9, 0.6])
+                    c[0].write(f"{rule['category']} ({rule['type'].capitalize()})")
+                    c[1].write(rule["description"] or "")
+                    c[2].write(money(rule["amount"]))
+                    c[3].write(recurring.FREQUENCY_LABELS[rule["frequency"]])
+                    with c[4]:
+                        if rule["active"]:
+                            c[4].write(dt.date.fromisoformat(rule["next_due_date"]).strftime("%b %d, %Y"))
+                        else:
+                            st.markdown(components.tag("PAUSED", "#64748b"), unsafe_allow_html=True)
+                    with c[5]:
+                        with st.popover("⋮", key=f"rec_pop_{rule['id']}"):
+                            if st.button("Edit", key=f"rec_edit_{rule['id']}", use_container_width=True):
+                                edit_recurring_dialog(rule)
+                            pause_label = "Resume" if not rule["active"] else "Pause"
+                            if st.button(pause_label, key=f"rec_toggle_{rule['id']}", use_container_width=True):
+                                db.set_recurring_active(rule["id"], not rule["active"])
+                                st.rerun()
+                            if st.button("Delete", key=f"rec_del_{rule['id']}", use_container_width=True):
+                                delete_recurring_dialog(rule)
 
     st.divider()
     if st.button("+ Add recurring transaction"):
@@ -900,22 +908,23 @@ elif page == "Settings":
     if not cats:
         st.info("No categories yet — add one below.")
     else:
-        with st.container(key="tablehead_cat"):
-            header = st.columns([2.5, 1, 1.5, 0.6])
-            for col, label in zip(header, ["Category", "Type", "Group", ""]):
-                col.markdown(f"**{label}**")
-        for i, cat in enumerate(cats):
-            with st.container(key=f"hoverrow_cat_{i}"):
-                c = st.columns([2.5, 1, 1.5, 0.6])
-                c[0].write(cat["name"])
-                c[1].write(cat["type"].capitalize())
-                c[2].write(cat["group_name"] or "—")
-                with c[3]:
-                    with st.popover("⋮", key=f"cat_pop_{cat['name']}"):
-                        if st.button("Edit", key=f"cat_edit_{cat['name']}", use_container_width=True):
-                            edit_category_dialog(cat)
-                        if st.button("Delete", key=f"cat_del_{cat['name']}", use_container_width=True):
-                            delete_category_dialog(cat)
+        with st.container(key="tablewrap_cat"):
+            with st.container(key="tablehead_cat"):
+                header = st.columns([2.5, 1, 1.5, 0.6])
+                for col, label in zip(header, ["Category", "Type", "Group", ""]):
+                    col.markdown(f"**{label}**")
+            for i, cat in enumerate(cats):
+                with st.container(key=f"hoverrow_cat_{i}"):
+                    c = st.columns([2.5, 1, 1.5, 0.6])
+                    c[0].write(cat["name"])
+                    c[1].write(cat["type"].capitalize())
+                    c[2].write(cat["group_name"] or "—")
+                    with c[3]:
+                        with st.popover("⋮", key=f"cat_pop_{cat['name']}"):
+                            if st.button("Edit", key=f"cat_edit_{cat['name']}", use_container_width=True):
+                                edit_category_dialog(cat)
+                            if st.button("Delete", key=f"cat_del_{cat['name']}", use_container_width=True):
+                                delete_category_dialog(cat)
 
     st.divider()
     if st.button("+ Add category"):

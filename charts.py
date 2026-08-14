@@ -10,6 +10,8 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
+from components import contrast_text_color
+
 MONEY_AXIS = alt.Axis(format="$,.0f")
 # Force every category label to show, even if that means some crowding — dropping labels on a
 # categorical axis (unlike a dense time axis) makes bars unidentifiable.
@@ -157,6 +159,7 @@ def group_by_month_bar(long_df: pd.DataFrame, x_order: list[str], colors: dict[s
         return
     domain = list(colors.keys())
     range_ = list(colors.values())
+    text_range = [contrast_text_color(colors[g]) for g in domain]
     y_axis = alt.Axis(format="%") if normalize else MONEY_AXIS
     text_field = "pct" if normalize else "amount"
     text_format = ".0%" if normalize else "$,.0f"
@@ -169,18 +172,29 @@ def group_by_month_bar(long_df: pd.DataFrame, x_order: list[str], colors: dict[s
     base = alt.Chart(long_df).encode(
         x=alt.X("month_label:N", title=None, sort=x_order),
         y=alt.Y("amount:Q", title=None, axis=y_axis, stack="normalize" if normalize else "zero"),
-        color=alt.Color("group:N", scale=alt.Scale(domain=domain, range=range_), legend=alt.Legend(title=None, orient="top")),
     )
     bars = base.mark_bar().encode(
+        color=alt.Color("group:N", scale=alt.Scale(domain=domain, range=range_), legend=alt.Legend(title=None, orient="top")),
         tooltip=[alt.Tooltip("month_label:N", title="Month"), alt.Tooltip("group:N", title="Group"), value_tooltip],
     )
+    # A separate, explicit color encoding here (black or white per group, whichever contrasts
+    # with that group's bar color) -- text_mark(color=...) alone can't win against an inherited
+    # data-driven color encoding, which is what made labels blend into their bars before.
     labels = (
         base.transform_filter("datum.amount > 0")
-        .mark_text(color="white", fontWeight="bold", fontSize=11)
-        .encode(text=alt.Text(f"{text_field}:Q", format=text_format))
+        .mark_text(fontWeight="bold", fontSize=11)
+        .encode(
+            text=alt.Text(f"{text_field}:Q", format=text_format),
+            color=alt.Color("group:N", scale=alt.Scale(domain=domain, range=text_range), legend=None),
+        )
     )
 
-    st.altair_chart((bars + labels).properties(height=height), use_container_width=True)
+    # resolve_scale(color="independent") is required here -- by default Vega-Lite shares one
+    # color scale across layers that encode the same field name ("group"), so without this the
+    # labels' contrast-color range gets silently discarded in favor of the bars' range and the
+    # text blends into the bars again.
+    chart = (bars + labels).resolve_scale(color="independent").properties(height=height)
+    st.altair_chart(chart, use_container_width=True)
 
 
 def single_series_bar(df: pd.DataFrame, x_col: str, y_col: str, x_order: list[str],
