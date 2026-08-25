@@ -487,24 +487,22 @@ elif page == "Savings":
     @st.dialog("Add a Savings Goal")
     def add_goal_dialog():
         name = st.text_input("Goal name (e.g. Emergency Fund, Travel, Car)")
-        c1, c2, c3 = st.columns(3)
+        c1, c2 = st.columns(2)
         goal_amount = c1.number_input("Target amount", min_value=0.0, step=100.0, format="%.2f")
-        monthly_target = c2.number_input("Monthly target", min_value=0.0, step=10.0, format="%.2f")
-        starting_amount = c3.number_input("Starting balance (already saved)", min_value=0.0, step=10.0, format="%.2f")
+        starting_amount = c2.number_input("Starting balance (already saved)", min_value=0.0, step=10.0, format="%.2f")
         if st.button("Save", type="primary"):
             if not name.strip():
                 st.error("Please name the goal.")
             else:
-                db.add_savings_goal(name.strip(), goal_amount, monthly_target, starting_amount, dt.date.today().isoformat())
+                db.add_savings_goal(name.strip(), goal_amount, 0.0, starting_amount, dt.date.today().isoformat())
                 st.rerun()
 
     @st.dialog("Edit Savings Goal")
     def edit_goal_dialog(goal):
         st.write(f"**{goal['name']}**")
-        c1, c2, c3 = st.columns(3)
+        c1, c2 = st.columns(2)
         goal_amount = c1.number_input("Target amount", min_value=0.0, step=100.0, value=float(goal["goal_amount"]), format="%.2f")
-        monthly_target = c2.number_input("Monthly target", min_value=0.0, step=10.0, value=float(goal["monthly_target"]), format="%.2f")
-        current_amount = c3.number_input(
+        current_amount = c2.number_input(
             "Current amount", min_value=0.0, step=10.0,
             value=float(analytics.savings_current_amount(goal, df)), format="%.2f",
         )
@@ -514,7 +512,7 @@ elif page == "Savings":
             "Snapshot\" instead."
         )
         if st.button("Save changes", type="primary"):
-            db.update_savings_goal(goal["id"], goal_amount, monthly_target, goal["starting_amount"])
+            db.update_savings_goal(goal["id"], goal_amount, goal["monthly_target"], goal["starting_amount"])
             db.add_savings_snapshot(goal["id"], "weekly", dt.date.today().isoformat(), current_amount)
             st.rerun()
 
@@ -629,7 +627,6 @@ elif page == "Savings":
                 with rc1:
                     st.markdown(f"**{g['name']}** — {money(current)} / {money(g['goal_amount'])}  ({pct:.0%})")
                     st.progress(pct)
-                    st.caption(f"Monthly target: {money(g['monthly_target'])}")
                 with rc2:
                     with st.popover("⋮", key=f"goal_pop_{g['id']}"):
                         if st.button("Edit", key=f"goal_edit_{g['id']}", use_container_width=True):
