@@ -536,13 +536,14 @@ def add_recurring(
 def update_recurring(
     rule_id: int, category: str, description: str, amount: float,
     frequency_interval: int, frequency_unit: str, next_due_date: str, active: bool,
+    goal_id: int | None = None,
 ) -> None:
     with get_conn() as conn:
         conn.execute(
             "UPDATE recurring_transactions SET category = ?, description = ?, amount = ?, "
-            "frequency_interval = ?, frequency_unit = ?, next_due_date = ?, active = ? WHERE id = ?",
+            "frequency_interval = ?, frequency_unit = ?, next_due_date = ?, active = ?, goal_id = ? WHERE id = ?",
             (category, description, amount, frequency_interval, frequency_unit,
-             next_due_date, int(active), rule_id),
+             next_due_date, int(active), goal_id, rule_id),
         )
 
 

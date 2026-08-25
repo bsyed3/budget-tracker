@@ -127,7 +127,15 @@ if page == "Snapshot":
 
     st.divider()
     st.subheader("Upcoming")
-    upcoming = recurring.upcoming_occurrences(3)
+    next_paycheck = next((o for o in recurring.upcoming_occurrences(10) if o["type"] == "income"), None)
+    if next_paycheck:
+        st.markdown(f"**Next paycheck:** {money(next_paycheck['amount'])} on {next_paycheck['date'].strftime('%b %d, %Y')}")
+    else:
+        st.caption("No upcoming paycheck set up as a recurring income transaction.")
+    st.write("")
+
+    savings_categories = {c for c, g in groups.items() if g == "Savings"}
+    upcoming = recurring.upcoming_occurrences(3, exclude_categories=savings_categories)
     if not upcoming:
         st.caption("No upcoming recurring transactions — set some up on the Recurring Transactions page.")
     else:
@@ -905,6 +913,16 @@ elif page == "Recurring Transactions":
             format_func=lambda u: recurring.FREQUENCY_UNIT_LABELS[u], key=f"rec_edit_freq_unit_{rid}",
         )
         description = st.text_input("Description", value=rule["description"] or "", key=f"rec_edit_desc_{rid}")
+        goal_id = rule["goal_id"]
+        if rule["type"] == "expense" and groups.get(rule["category"]) == "Savings":
+            rgoals = db.get_savings_goals()
+            if rgoals:
+                goal_names = ["None"] + [g["name"] for g in rgoals]
+                current_name = next((g["name"] for g in rgoals if g["id"] == goal_id), "None")
+                choice = st.selectbox(
+                    "Savings goal", goal_names, index=goal_names.index(current_name), key=f"rec_edit_goal_{rid}"
+                )
+                goal_id = next((g["id"] for g in rgoals if g["name"] == choice), None) if choice != "None" else None
         next_due = st.date_input(
             "Next due date", value=dt.date.fromisoformat(rule["next_due_date"]), key=f"rec_edit_next_{rid}"
         )
@@ -915,7 +933,7 @@ elif page == "Recurring Transactions":
             else:
                 db.update_recurring(
                     rid, rule["category"], description, amount, int(freq_interval), freq_unit,
-                    next_due.isoformat(), active,
+                    next_due.isoformat(), active, goal_id,
                 )
                 st.rerun()
 
