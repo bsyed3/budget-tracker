@@ -24,6 +24,12 @@ def money(x: float) -> str:
     return f"\\${x:,.2f}"
 
 
+def signed_money(x: float) -> str:
+    """Like money(), but with an explicit +/- sign -- for a change/delta rather than a plain amount."""
+    sign = "+" if x >= 0 else "-"
+    return f"{sign}\\${abs(x):,.2f}"
+
+
 def percentage_bar(breakdown: dict[str, float], colors: dict[str, str] | None = None) -> None:
     """A single horizontal bar split into colored, labeled segments sized by share of total."""
     colors = colors or db.GROUP_COLORS

@@ -182,6 +182,23 @@ def savings_current_amount(goal_row, df: pd.DataFrame) -> float:
     return goal_row["starting_amount"] + contributed
 
 
+def savings_change_since_month_start(goal_row, df: pd.DataFrame) -> tuple[float, float | None] | None:
+    """(dollar_change, pct_change) vs. this goal's recorded monthly snapshot for the 1st of the
+    current month, or None if that snapshot hasn't been recorded yet. pct_change is None if the
+    baseline itself was $0 (a percentage change from zero is undefined)."""
+    month_start = dt.date.today().replace(day=1).isoformat()
+    baseline_row = next(
+        (s for s in db.get_goal_snapshots(goal_row["id"], "monthly") if s["period_date"] == month_start), None
+    )
+    if baseline_row is None:
+        return None
+    baseline = baseline_row["amount"]
+    current = savings_current_amount(goal_row, df)
+    dollar_change = current - baseline
+    pct_change = (dollar_change / baseline * 100) if baseline != 0 else None
+    return dollar_change, pct_change
+
+
 def tfsa_room_remaining(df: pd.DataFrame, anchor_value: float, anchor_date: str, linked_goal_ids: list[int]) -> float:
     """Anchor value minus contributions (expense transactions linked to one of the given goals)
     dated on or after the anchor date -- setting a new anchor resets the clock to today, so

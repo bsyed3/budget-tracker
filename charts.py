@@ -165,7 +165,11 @@ def savings_balance_line(long_df: pd.DataFrame, colors: dict[str, str], height: 
                 "period_date:T", title=None,
                 axis=alt.Axis(format="%b %d, %Y", values=tick_values, labelOverlap=True, labelAngle=-40),
             ),
-            y=alt.Y("amount:Q", title=None, axis=MONEY_AXIS),
+            # zero=False -- a trend line (unlike a bar) doesn't need to start at $0. A goal like
+            # Loans moves a few hundred dollars around a ~$26,000 balance; forcing the axis down
+            # to zero flattens that into an invisible near-straight line. Letting the axis fit
+            # the data's actual range is what makes week-to-week movement visible.
+            y=alt.Y("amount:Q", title=None, axis=MONEY_AXIS, scale=alt.Scale(zero=False)),
             color=alt.Color("goal:N", scale=alt.Scale(domain=domain, range=range_), legend=alt.Legend(title=None, orient="top")),
             tooltip=[alt.Tooltip("period_date:T", title="Date", format="%b %d, %Y"), alt.Tooltip("goal:N", title="Goal"), alt.Tooltip("amount:Q", title="Amount", format="$,.2f")],
         )

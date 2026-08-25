@@ -126,7 +126,24 @@ if page == "Snapshot":
             st.write("")
 
     st.divider()
-    st.subheader("This Week")
+    st.subheader("Upcoming")
+    upcoming = recurring.upcoming_occurrences(3)
+    if not upcoming:
+        st.caption("No upcoming recurring transactions — set some up on the Recurring Transactions page.")
+    else:
+        for occ in upcoming:
+            uc1, uc2, uc3 = st.columns([0.9, 2.5, 3])
+            with uc1:
+                badge_color = "#0ea5e9" if occ["type"] == "income" else "#64748b"
+                st.markdown(components.tag(occ["type"].capitalize(), badge_color), unsafe_allow_html=True)
+            with uc2:
+                label = occ["category"] + (f" — {occ['description']}" if occ["description"] else "")
+                st.markdown(f"**{label}**")
+            with uc3:
+                st.markdown(f"{money(occ['amount'])} · {occ['date'].strftime('%b %d, %Y')}")
+
+    st.divider()
+    st.subheader("Weekly Spending")
     weekly_goal = float(db.get_setting("weekly_goal_total", "400"))
     two_weeks = analytics.weekly_totals(df, weeks=2)
     spent_last_week = float(two_weeks["amount"].iloc[0]) if len(two_weeks) > 0 else 0.0
@@ -149,33 +166,27 @@ if page == "Snapshot":
     if not goals:
         st.caption("No savings goals yet — add one on the Savings page.")
     else:
+        month_start_label = dt.date.today().replace(day=1).strftime("%b %d")
         for g in goals:
             current = analytics.savings_current_amount(g, df)
-            pct = min(current / g["goal_amount"], 1.0) if g["goal_amount"] > 0 else 0.0
+            change = analytics.savings_change_since_month_start(g, df)
             sc1, sc2 = st.columns([2.5, 3])
             with sc1:
                 st.markdown(f"**{g['name']}**")
             with sc2:
-                st.markdown(f"{money(current)} / {money(g['goal_amount'])}  ({pct:.0%})")
-            st.progress(pct)
+                if change is None:
+                    st.markdown(f"{money(current)}  (no {month_start_label} snapshot yet)")
+                else:
+                    dollar_change, pct_change = change
+                    if pct_change is not None:
+                        pct_sign = "+" if pct_change >= 0 else "-"
+                        pct_str = f" / {pct_sign}{abs(pct_change):.1f}%"
+                    else:
+                        pct_str = ""
+                    st.markdown(
+                        f"{money(current)}  ({components.signed_money(dollar_change)}{pct_str} since {month_start_label})"
+                    )
             st.write("")
-
-    st.divider()
-    st.subheader("Upcoming")
-    upcoming = recurring.upcoming_occurrences(3)
-    if not upcoming:
-        st.caption("No upcoming recurring transactions — set some up on the Recurring Transactions page.")
-    else:
-        for occ in upcoming:
-            uc1, uc2, uc3 = st.columns([0.9, 2.5, 3])
-            with uc1:
-                badge_color = "#0ea5e9" if occ["type"] == "income" else "#64748b"
-                st.markdown(components.tag(occ["type"].capitalize(), badge_color), unsafe_allow_html=True)
-            with uc2:
-                label = occ["category"] + (f" — {occ['description']}" if occ["description"] else "")
-                st.markdown(f"**{label}**")
-            with uc3:
-                st.markdown(f"{money(occ['amount'])} · {occ['date'].strftime('%b %d, %Y')}")
 
 # ======================================================================= Overview
 elif page == "Overview":
@@ -507,38 +518,44 @@ elif page == "Savings":
     @st.dialog("Record Savings Snapshot")
     def record_snapshot_dialog():
         st.caption(
-            "Set each goal's actual current total for a given week (Monday) or month (the 1st) -- "
-            "pick a past date to override a value you already recorded."
-        )
-        period_type = st.radio(
-            "Frequency", ["weekly", "monthly"], format_func=lambda p: "Weekly" if p == "weekly" else "Monthly",
-            horizontal=True, key="snap_period_type",
+            "Set each goal's actual current total for a given date -- pick a past date to "
+            "override a value you already recorded. A Monday records into the weekly series, "
+            "the 1st of a month into the monthly series -- pick a date that's both (like this "
+            "year's June 1) and it records into both at once."
         )
         today = dt.date.today()
-        default_date = (
-            today - dt.timedelta(days=today.weekday()) if period_type == "weekly" else today.replace(day=1)
-        )
+        default_date = today - dt.timedelta(days=today.weekday())
         period_date = st.date_input("Date", value=default_date, key="snap_date")
-        if period_type == "weekly":
-            valid, expected = period_date.weekday() == 0, "a Monday"
-        else:
-            valid, expected = period_date.day == 1, "the 1st of a month"
+        applicable_types = []
+        if period_date.weekday() == 0:
+            applicable_types.append("weekly")
+        if period_date.day == 1:
+            applicable_types.append("monthly")
+        valid = bool(applicable_types)
         if not valid:
-            st.error(f"Please pick {expected} for a {period_type} snapshot.")
+            st.error("Please pick a Monday, the 1st of a month, or a date that's both.")
+        else:
+            st.caption(f"Recording into: {' and '.join(t.capitalize() for t in applicable_types)}")
         st.divider()
         amounts = {}
         for g in goals:
-            existing_rows = db.get_goal_snapshots(g["id"], period_type)
-            existing = next(
-                (s["amount"] for s in existing_rows if s["period_date"] == period_date.isoformat()), None
-            )
+            existing = None
+            for t in applicable_types:
+                match = next(
+                    (s["amount"] for s in db.get_goal_snapshots(g["id"], t) if s["period_date"] == period_date.isoformat()),
+                    None,
+                )
+                if match is not None:
+                    existing = match
+                    break
             default_amt = existing if existing is not None else analytics.savings_current_amount(g, df)
             amounts[g["id"]] = st.number_input(
                 g["name"], min_value=0.0, step=10.0, value=float(default_amt), format="%.2f", key=f"snap_amt_{g['id']}"
             )
         if st.button("Save snapshot", type="primary", disabled=not valid):
             for goal_id, amount in amounts.items():
-                db.add_savings_snapshot(goal_id, period_type, period_date.isoformat(), amount)
+                for t in applicable_types:
+                    db.add_savings_snapshot(goal_id, t, period_date.isoformat(), amount)
             st.success("Snapshot saved.")
             st.rerun()
 
