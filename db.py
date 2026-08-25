@@ -22,6 +22,19 @@ GROUP_COLORS = {
     "Savings": "#16a34a",    # green
 }
 
+# Distinct, colorblind-friendlyish qualitative palette for an arbitrary number of savings goals
+# on the same chart (cycles if there are ever more goals than colors).
+GOAL_PALETTE = [
+    "#2563eb", "#f59e0b", "#16a34a", "#dc2626", "#9333ea",
+    "#0891b2", "#ca8a04", "#db2777", "#4d7c0f", "#7c3aed",
+]
+
+
+def goal_colors(goal_names: list[str]) -> dict[str, str]:
+    """Stable color assignment for a list of goal names, in the order given."""
+    return {name: GOAL_PALETTE[i % len(GOAL_PALETTE)] for i, name in enumerate(goal_names)}
+
+
 # Seed data used only the first time the database is created (or to backfill any
 # category found in old transaction data that isn't in the categories table yet).
 _SEED_EXPENSE_GROUPS = {
@@ -157,6 +170,18 @@ def init_db() -> None:
                 monthly_target REAL NOT NULL DEFAULT 0,
                 starting_amount REAL NOT NULL DEFAULT 0,
                 starting_date TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS savings_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                goal_id INTEGER NOT NULL REFERENCES savings_goals(id) ON DELETE CASCADE,
+                period_type TEXT NOT NULL CHECK (period_type IN ('weekly', 'monthly')),
+                period_date TEXT NOT NULL,
+                amount REAL NOT NULL,
+                UNIQUE(goal_id, period_type, period_date)
             )
             """
         )
@@ -563,12 +588,58 @@ def update_savings_goal(goal_id: int, goal_amount: float, monthly_target: float,
 
 def delete_savings_goal(goal_id: int) -> None:
     with get_conn() as conn:
+        # Deleted explicitly rather than relying on the ON DELETE CASCADE in the schema --
+        # Turso's connection doesn't necessarily have "PRAGMA foreign_keys = ON" active the way
+        # the local sqlite3 branch does, so cascade delete isn't guaranteed to actually fire there.
+        conn.execute("DELETE FROM savings_snapshots WHERE goal_id = ?", (goal_id,))
         conn.execute("DELETE FROM savings_goals WHERE id = ?", (goal_id,))
 
 
 def get_savings_goals() -> list:
     with get_conn() as conn:
         return conn.execute("SELECT * FROM savings_goals ORDER BY name").fetchall()
+
+
+# -------------------------------------------------------------- savings snapshots
+def add_savings_snapshot(goal_id: int, period_type: str, period_date: str, amount: float) -> None:
+    """Record (or override, if one already exists for this goal/period_type/date) a point-in-time
+    total balance for a goal -- the source of truth for its "current amount" once any exist."""
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO savings_snapshots (goal_id, period_type, period_date, amount) VALUES (?, ?, ?, ?)
+            ON CONFLICT(goal_id, period_type, period_date) DO UPDATE SET amount = excluded.amount
+            """,
+            (goal_id, period_type, period_date, amount),
+        )
+
+
+def get_savings_snapshots(period_type: str | None = None) -> list:
+    with get_conn() as conn:
+        if period_type:
+            return conn.execute(
+                "SELECT * FROM savings_snapshots WHERE period_type = ? ORDER BY period_date", (period_type,)
+            ).fetchall()
+        return conn.execute("SELECT * FROM savings_snapshots ORDER BY period_date").fetchall()
+
+
+def get_goal_snapshots(goal_id: int, period_type: str) -> list:
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM savings_snapshots WHERE goal_id = ? AND period_type = ? ORDER BY period_date",
+            (goal_id, period_type),
+        ).fetchall()
+
+
+def latest_savings_amount(goal_id: int) -> float | None:
+    """The most recent snapshot for this goal across both weekly and monthly, or None if it has
+    never had one recorded (callers should fall back to the pre-snapshot calculation)."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT amount FROM savings_snapshots WHERE goal_id = ? ORDER BY period_date DESC LIMIT 1",
+            (goal_id,),
+        ).fetchone()
+    return row["amount"] if row else None
 
 
 # --------------------------------------------------------------------- settings

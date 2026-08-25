@@ -144,6 +144,36 @@ def weekly_line(weekly_df: pd.DataFrame, height: int = 300) -> None:
     st.altair_chart(chart, use_container_width=True)
 
 
+def savings_balance_line(long_df: pd.DataFrame, colors: dict[str, str], height: int = 320) -> None:
+    """Multiple goals' total-balance-over-time, one line per goal. long_df has period_date/goal/amount.
+
+    Temporal x-axis (like weekly_line) rather than a categorical month label -- tick marks land
+    exactly on the real snapshot dates instead of interpolating, and weekly vs. monthly data both
+    space out correctly by real elapsed time.
+    """
+    if long_df.empty:
+        st.caption("No snapshots recorded yet.")
+        return
+    tick_values = sorted(long_df["period_date"].unique().tolist())
+    domain = list(colors.keys())
+    range_ = list(colors.values())
+    chart = (
+        alt.Chart(long_df)
+        .mark_line(point=True, strokeWidth=2.5)
+        .encode(
+            x=alt.X(
+                "period_date:T", title=None,
+                axis=alt.Axis(format="%b %d, %Y", values=tick_values, labelOverlap=True, labelAngle=-40),
+            ),
+            y=alt.Y("amount:Q", title=None, axis=MONEY_AXIS),
+            color=alt.Color("goal:N", scale=alt.Scale(domain=domain, range=range_), legend=alt.Legend(title=None, orient="top")),
+            tooltip=[alt.Tooltip("period_date:T", title="Date", format="%b %d, %Y"), alt.Tooltip("goal:N", title="Goal"), alt.Tooltip("amount:Q", title="Amount", format="$,.2f")],
+        )
+        .properties(height=height)
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+
 def group_by_month_bar(long_df: pd.DataFrame, x_order: list[str], colors: dict[str, str],
                         height: int = 300, normalize: bool = False) -> None:
     """Stacked bars of Needs/Wants/Savings amounts per month (long_df has month_label/group/amount,

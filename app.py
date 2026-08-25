@@ -495,13 +495,51 @@ elif page == "Savings":
     def delete_goal_dialog(goal):
         st.warning(
             f"Delete **{goal['name']}**? This can't be undone. Past contributions logged to it "
-            "keep their category but lose the goal link."
+            "keep their category but lose the goal link. Its recorded snapshots are deleted too."
         )
         c1, c2 = st.columns(2)
         if c1.button("Yes, delete", type="primary"):
             db.delete_savings_goal(goal["id"])
             st.rerun()
         if c2.button("Cancel"):
+            st.rerun()
+
+    @st.dialog("Record Savings Snapshot")
+    def record_snapshot_dialog():
+        st.caption(
+            "Set each goal's actual current total for a given week (Monday) or month (the 1st) -- "
+            "pick a past date to override a value you already recorded."
+        )
+        period_type = st.radio(
+            "Frequency", ["weekly", "monthly"], format_func=lambda p: "Weekly" if p == "weekly" else "Monthly",
+            horizontal=True, key="snap_period_type",
+        )
+        today = dt.date.today()
+        default_date = (
+            today - dt.timedelta(days=today.weekday()) if period_type == "weekly" else today.replace(day=1)
+        )
+        period_date = st.date_input("Date", value=default_date, key="snap_date")
+        if period_type == "weekly":
+            valid, expected = period_date.weekday() == 0, "a Monday"
+        else:
+            valid, expected = period_date.day == 1, "the 1st of a month"
+        if not valid:
+            st.error(f"Please pick {expected} for a {period_type} snapshot.")
+        st.divider()
+        amounts = {}
+        for g in goals:
+            existing_rows = db.get_goal_snapshots(g["id"], period_type)
+            existing = next(
+                (s["amount"] for s in existing_rows if s["period_date"] == period_date.isoformat()), None
+            )
+            default_amt = existing if existing is not None else analytics.savings_current_amount(g, df)
+            amounts[g["id"]] = st.number_input(
+                g["name"], min_value=0.0, step=10.0, value=float(default_amt), format="%.2f", key=f"snap_amt_{g['id']}"
+            )
+        if st.button("Save snapshot", type="primary", disabled=not valid):
+            for goal_id, amount in amounts.items():
+                db.add_savings_snapshot(goal_id, period_type, period_date.isoformat(), amount)
+            st.success("Snapshot saved.")
             st.rerun()
 
     st.subheader("Savings Goals")
@@ -532,8 +570,28 @@ elif page == "Savings":
                             delete_goal_dialog(g)
         st.divider()
 
-    if st.button("+ Add goal"):
+    gbtn1, gbtn2 = st.columns(2)
+    if gbtn1.button("+ Add goal"):
         add_goal_dialog()
+    if goals and gbtn2.button("Record/Edit Snapshot"):
+        record_snapshot_dialog()
+
+    st.divider()
+    st.subheader("Savings Balance Over Time")
+    if not goals:
+        st.caption("Add a goal first to start tracking its balance over time.")
+    else:
+        bal_view = st.radio("View by", ["Week", "Month"], horizontal=True, key="savings_balance_view")
+        bal_period_type = "weekly" if bal_view == "Week" else "monthly"
+        goal_names_all = [g["name"] for g in goals]
+        selected_goal_names = st.multiselect(
+            "Goals (leave empty = all)", goal_names_all, key="savings_balance_goals"
+        )
+        snapshots = db.get_savings_snapshots(bal_period_type)
+        balance_long_df = analytics.savings_snapshot_series(snapshots, goals)
+        if selected_goal_names:
+            balance_long_df = balance_long_df[balance_long_df["goal"].isin(selected_goal_names)]
+        charts.savings_balance_line(balance_long_df, db.goal_colors(goal_names_all))
 
     st.divider()
     st.subheader("Savings by Month")

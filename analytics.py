@@ -170,7 +170,29 @@ def weekly_totals(
 
 
 def savings_current_amount(goal_row, df: pd.DataFrame) -> float:
+    """A goal's current total balance: its most recent weekly/monthly snapshot if it has ever
+    had one recorded, otherwise the pre-snapshot calculation (starting balance + linked
+    contribution transactions) so numbers don't suddenly change before snapshots are in use."""
+    latest = db.latest_savings_amount(goal_row["id"])
+    if latest is not None:
+        return latest
     contributed = 0.0
     if not df.empty:
         contributed = df.loc[df["goal_id"] == goal_row["id"], "amount"].sum()
     return goal_row["starting_amount"] + contributed
+
+
+def savings_snapshot_series(snapshots: list, goals: list) -> pd.DataFrame:
+    """Long-format period_date/goal/amount, for the multi-goal balance-over-time chart."""
+    if not snapshots:
+        return pd.DataFrame(columns=["period_date", "goal", "amount"])
+    goal_names = {g["id"]: g["name"] for g in goals}
+    rows = [
+        {
+            "period_date": pd.Timestamp(s["period_date"]),
+            "goal": goal_names.get(s["goal_id"], "Unknown"),
+            "amount": s["amount"],
+        }
+        for s in snapshots
+    ]
+    return pd.DataFrame(rows).sort_values("period_date")
