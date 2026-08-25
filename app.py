@@ -198,18 +198,6 @@ elif page == "Overview":
         month_order = list(summary.index)
         x_order = [fmt_month(m) for m in month_order]
 
-        st.subheader("Income vs. Expenses vs. Savings Over Time")
-        st.caption("Expenses = Needs + Wants. Savings is tracked separately since that money isn't spent.")
-        trend_long = summary.reset_index()
-        trend_long["month_label"] = trend_long["month"].map(fmt_month)
-        trend_long = trend_long.rename(columns={"Total Income": "Income"})
-        trend_long = trend_long.melt(
-            id_vars=["month_label"], value_vars=["Income", "Expenses", "Savings"],
-            var_name="Series", value_name="Amount",
-        )
-        charts.multi_line(trend_long, x_col="month_label", series_col="Series", y_col="Amount",
-                           colors=TREND_COLORS, x_order=x_order)
-
         st.subheader("Expense Breakdown (All Time)")
         st.caption("Needs / Wants / Savings share of everything you've logged.")
         all_time_breakdown = analytics.group_breakdown(df, groups)
@@ -226,6 +214,18 @@ elif page == "Overview":
             gbm["month_label"] = gbm["month"].map(fmt_month)
             gbm["pct"] = gbm.groupby("month")["amount"].transform(lambda x: x / x.sum())
             charts.group_by_month_bar(gbm, x_order=gbm_order, colors=db.GROUP_COLORS, normalize=show_pct)
+
+        st.subheader("Income vs. Expenses vs. Savings Over Time")
+        st.caption("Expenses = Needs + Wants. Savings is tracked separately since that money isn't spent.")
+        trend_long = summary.reset_index()
+        trend_long["month_label"] = trend_long["month"].map(fmt_month)
+        trend_long = trend_long.rename(columns={"Total Income": "Income"})
+        trend_long = trend_long.melt(
+            id_vars=["month_label"], value_vars=["Income", "Expenses", "Savings"],
+            var_name="Series", value_name="Amount",
+        )
+        charts.multi_line(trend_long, x_col="month_label", series_col="Series", y_col="Amount",
+                           colors=TREND_COLORS, x_order=x_order)
 
         st.subheader("Monthly Summary")
         display_cols = ["Total Income", "Needs", "Wants", "Savings", "Expenses", "Net Income"]
@@ -306,25 +306,6 @@ elif page == "Breakdown":
     c3.metric("To Savings", f"${breakdown['Savings']:,.2f}")
 
     st.divider()
-    st.subheader("Spending by Category")
-    st.caption("Excludes Savings contributions. Colored by group — Needs (blue) / Wants (orange).")
-    expense_df = scope_df[(scope_df["type"] == "expense") & (scope_df["category"].map(groups) != "Savings")]
-    if expense_df.empty:
-        st.info("No expenses this period.")
-    else:
-        by_cat = expense_df.groupby("category")["amount"].sum().sort_values(ascending=False)
-        charts.category_bar_by_group(by_cat, groups, db.GROUP_COLORS)
-
-    st.divider()
-    st.subheader("Income by Category")
-    income_df = scope_df[scope_df["type"] == "income"]
-    if income_df.empty:
-        st.info("No income this period.")
-    else:
-        by_cat_income = income_df.groupby("category")["amount"].sum().sort_values(ascending=False)
-        charts.category_bar_flat(by_cat_income, TREND_COLORS["Income"])
-
-    st.divider()
     st.subheader("Needs / Wants / Savings")
     components.percentage_bar(breakdown.to_dict())
 
@@ -358,6 +339,25 @@ elif page == "Breakdown":
                 compare_df = compare_df.sort_values("This month", ascending=False)
                 compare_colors = {"This month": COMPARE_COLORS["This month"], avg_label: COMPARE_COLORS["3-month avg"]}
                 charts.compare_bar(compare_df, compare_colors)
+
+    st.divider()
+    st.subheader("Spending by Category")
+    st.caption("Excludes Savings contributions. Colored by group — Needs (blue) / Wants (orange).")
+    expense_df = scope_df[(scope_df["type"] == "expense") & (scope_df["category"].map(groups) != "Savings")]
+    if expense_df.empty:
+        st.info("No expenses this period.")
+    else:
+        by_cat = expense_df.groupby("category")["amount"].sum().sort_values(ascending=False)
+        charts.category_bar_by_group(by_cat, groups, db.GROUP_COLORS)
+
+    st.divider()
+    st.subheader("Income by Category")
+    income_df = scope_df[scope_df["type"] == "income"]
+    if income_df.empty:
+        st.info("No income this period.")
+    else:
+        by_cat_income = income_df.groupby("category")["amount"].sum().sort_values(ascending=False)
+        charts.category_bar_flat(by_cat_income, TREND_COLORS["Income"])
 
     st.divider()
     st.subheader(f"Transactions — {period_label}")
