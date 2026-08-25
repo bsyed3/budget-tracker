@@ -572,6 +572,8 @@ elif page == "Savings":
         pct_all = min(total_current / total_goal, 1.0) if total_goal > 0 else 0.0
         st.markdown(f"**Total across all goals** — {money(total_current)} / {money(total_goal)} ({pct_all:.0%})")
         components.colored_progress(pct_all)
+        st.write("")
+        st.write("")
 
         linked_names = [g["name"] for g in goals if g["id"] in tfsa_linked_ids]
         tc1, tc2 = st.columns([5, 1], vertical_alignment="center")
