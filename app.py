@@ -127,18 +127,21 @@ if page == "Snapshot":
 
     st.divider()
     st.subheader("This Week")
-    weekly_goal = float(db.get_setting("weekly_spending_goal", "400"))
-    this_week = analytics.weekly_totals(df, weeks=1)
-    spent_this_week = float(this_week["amount"].iloc[0]) if not this_week.empty else 0.0
-    week_pct = spent_this_week / weekly_goal if weekly_goal > 0 else 0.0
-    wk1, wk2, wk3 = st.columns([0.9, 2.5, 3])
-    with wk1:
-        st.markdown(components.status_pill(week_pct), unsafe_allow_html=True)
-    with wk2:
-        st.markdown("**This week**")
-    with wk3:
-        st.markdown(f"{money(spent_this_week)} / {money(weekly_goal)}  ({week_pct:.0%})")
-    components.colored_progress(week_pct)
+    weekly_goal = float(db.get_setting("weekly_goal_total", "400"))
+    two_weeks = analytics.weekly_totals(df, weeks=2)
+    spent_last_week = float(two_weeks["amount"].iloc[0]) if len(two_weeks) > 0 else 0.0
+    spent_this_week = float(two_weeks["amount"].iloc[1]) if len(two_weeks) > 1 else 0.0
+    for label, spent in [("This week", spent_this_week), ("Last week", spent_last_week)]:
+        week_pct = spent / weekly_goal if weekly_goal > 0 else 0.0
+        wk1, wk2, wk3 = st.columns([0.9, 2.5, 3])
+        with wk1:
+            st.markdown(components.status_pill(week_pct), unsafe_allow_html=True)
+        with wk2:
+            st.markdown(f"**{label}**")
+        with wk3:
+            st.markdown(f"{money(spent)} / {money(weekly_goal)}  ({week_pct:.0%})")
+        components.colored_progress(week_pct)
+        st.write("")
 
     st.divider()
     st.subheader("Savings Snapshot")
@@ -156,6 +159,23 @@ if page == "Snapshot":
                 st.markdown(f"{money(current)} / {money(g['goal_amount'])}  ({pct:.0%})")
             st.progress(pct)
             st.write("")
+
+    st.divider()
+    st.subheader("Upcoming")
+    upcoming = recurring.upcoming_occurrences(3)
+    if not upcoming:
+        st.caption("No upcoming recurring transactions — set some up on the Recurring Transactions page.")
+    else:
+        for occ in upcoming:
+            uc1, uc2, uc3 = st.columns([0.9, 2.5, 3])
+            with uc1:
+                badge_color = "#0ea5e9" if occ["type"] == "income" else "#64748b"
+                st.markdown(components.tag(occ["type"].capitalize(), badge_color), unsafe_allow_html=True)
+            with uc2:
+                label = occ["category"] + (f" — {occ['description']}" if occ["description"] else "")
+                st.markdown(f"**{label}**")
+            with uc3:
+                st.markdown(f"{money(occ['amount'])} · {occ['date'].strftime('%b %d, %Y')}")
 
 # ======================================================================= Overview
 elif page == "Overview":
@@ -227,7 +247,9 @@ elif page == "Overview":
         else:
             st.caption(f"{weekly_scope_label}-only spending, all time.")
 
-        weekly_goal = float(db.get_setting("weekly_spending_goal", "400"))
+        weekly_goal_key = {"Wants": "weekly_goal_wants", "Needs": "weekly_goal_needs", "Total": "weekly_goal_total"}[weekly_scope_label]
+        weekly_goal_default = "400" if weekly_scope_label == "Total" else "200"
+        weekly_goal = float(db.get_setting(weekly_goal_key, weekly_goal_default))
         weekly = analytics.weekly_totals(df, all_time=True, scope=weekly_scope)
         weekly_chart_df = weekly.rename(columns={"amount": "Spent"})
         weekly_chart_df["Goal"] = weekly_goal
@@ -237,12 +259,10 @@ elif page == "Overview":
         weekly_table["Week"] = (
             weekly_table["week_start"].dt.strftime("%b %d, %Y") + " to " + weekly_table["week_end"].dt.strftime("%b %d, %Y")
         )
-        weekly_table["Goal"] = weekly_goal
-        weekly_table["Over/Under"] = weekly_table["amount"] - weekly_table["Goal"]
         st.dataframe(
-            weekly_table[["Week", "amount", "Goal", "Over/Under"]]
+            weekly_table[["Week", "amount"]]
             .rename(columns={"amount": "Spent"})
-            .style.format({"Spent": "${:,.2f}", "Goal": "${:,.2f}", "Over/Under": "${:,.2f}"}),
+            .style.format({"Spent": "${:,.2f}"}),
             use_container_width=True,
             hide_index=True,
         )
@@ -339,7 +359,7 @@ elif page == "Breakdown":
         display = display[["date", "type", "category", "description", "amount"]].sort_values("date", ascending=False)
         display.columns = ["Date", "Type", "Category", "Description", "Amount"]
         st.dataframe(
-            display,
+            display.style.format({"Amount": "${:,.2f}"}),
             use_container_width=True,
             hide_index=True,
         )
@@ -744,8 +764,12 @@ elif page == "Recurring Transactions":
             return
         c1, c2 = st.columns(2)
         category = c1.selectbox("Category", cats, key="rec_add_cat")
-        frequency = c2.selectbox(
-            "Repeats", recurring.FREQUENCIES, format_func=lambda f: recurring.FREQUENCY_LABELS[f], key="rec_add_freq"
+        st.write("Repeats")
+        fc1, fc2 = st.columns(2)
+        freq_interval = fc1.number_input("Every", min_value=1, step=1, value=1, key="rec_add_freq_n")
+        freq_unit = fc2.selectbox(
+            "Unit", recurring.FREQUENCY_UNITS, index=2, format_func=lambda u: recurring.FREQUENCY_UNIT_LABELS[u],
+            key="rec_add_freq_unit",
         )
         goal_id = None
         if type_ == "expense" and groups.get(category) == "Savings":
@@ -763,18 +787,25 @@ elif page == "Recurring Transactions":
             if amount <= 0:
                 st.error("Amount must be greater than zero.")
             else:
-                db.add_recurring(type_, category, description, amount, frequency, start_date.isoformat(), goal_id)
+                db.add_recurring(
+                    type_, category, description, amount, int(freq_interval), freq_unit,
+                    start_date.isoformat(), goal_id,
+                )
                 st.rerun()
 
     @st.dialog("Edit Recurring Transaction")
     def edit_recurring_dialog(rule):
         rid = int(rule["id"])
         st.write(f"**{rule['category']}** ({rule['type'].capitalize()})")
-        c1, c2 = st.columns(2)
-        amount = c1.number_input("Amount", min_value=0.0, step=1.0, value=float(rule["amount"]), format="%.2f", key=f"rec_edit_amt_{rid}")
-        frequency = c2.selectbox(
-            "Repeats", recurring.FREQUENCIES, index=recurring.FREQUENCIES.index(rule["frequency"]),
-            format_func=lambda f: recurring.FREQUENCY_LABELS[f], key=f"rec_edit_freq_{rid}",
+        amount = st.number_input("Amount", min_value=0.0, step=1.0, value=float(rule["amount"]), format="%.2f", key=f"rec_edit_amt_{rid}")
+        st.write("Repeats")
+        fc1, fc2 = st.columns(2)
+        freq_interval = fc1.number_input(
+            "Every", min_value=1, step=1, value=int(rule["frequency_interval"]), key=f"rec_edit_freq_n_{rid}"
+        )
+        freq_unit = fc2.selectbox(
+            "Unit", recurring.FREQUENCY_UNITS, index=recurring.FREQUENCY_UNITS.index(rule["frequency_unit"]),
+            format_func=lambda u: recurring.FREQUENCY_UNIT_LABELS[u], key=f"rec_edit_freq_unit_{rid}",
         )
         description = st.text_input("Description", value=rule["description"] or "", key=f"rec_edit_desc_{rid}")
         next_due = st.date_input(
@@ -785,7 +816,10 @@ elif page == "Recurring Transactions":
             if amount <= 0:
                 st.error("Amount must be greater than zero.")
             else:
-                db.update_recurring(rid, rule["category"], description, amount, frequency, next_due.isoformat(), active)
+                db.update_recurring(
+                    rid, rule["category"], description, amount, int(freq_interval), freq_unit,
+                    next_due.isoformat(), active,
+                )
                 st.rerun()
 
     @st.dialog("Delete Recurring Transaction")
@@ -793,8 +827,8 @@ elif page == "Recurring Transactions":
         rid = int(rule["id"])
         st.warning(
             f"Delete the recurring rule for **{rule['category']}** ({money(rule['amount'])}, "
-            f"{recurring.FREQUENCY_LABELS[rule['frequency']]})? Transactions it already created stay — "
-            "this only stops future ones."
+            f"{recurring.frequency_label(rule['frequency_interval'], rule['frequency_unit'])})? "
+            "Transactions it already created stay — this only stops future ones."
         )
         c1, c2 = st.columns(2)
         if c1.button("Yes, delete", type="primary", key=f"rec_del_confirm_{rid}"):
@@ -817,7 +851,7 @@ elif page == "Recurring Transactions":
                     c[0].write(f"{rule['category']} ({rule['type'].capitalize()})")
                     c[1].write(rule["description"] or "")
                     c[2].write(money(rule["amount"]))
-                    c[3].write(recurring.FREQUENCY_LABELS[rule["frequency"]])
+                    c[3].write(recurring.frequency_label(rule["frequency_interval"], rule["frequency_unit"]))
                     with c[4]:
                         if rule["active"]:
                             c[4].write(dt.date.fromisoformat(rule["next_due_date"]).strftime("%b %d, %Y"))
@@ -937,14 +971,28 @@ elif page == "Settings":
         add_category_dialog()
 
     st.divider()
-    st.subheader("Weekly Spending Goal")
+    st.subheader("Weekly Spending Goals")
     st.caption(
-        "Used on Snapshot's weekly check (Needs + Wants, excludes Savings) and Overview's "
-        "Weekly Breakdown chart, where you can scope it to Wants, Needs, or Total."
+        "Total is used on Snapshot's weekly check (Needs + Wants, excludes Savings) and on "
+        "Overview's Weekly Breakdown when scoped to Total. Needs/Wants apply on Overview when "
+        "scoped to that group."
     )
-    current_goal = float(db.get_setting("weekly_spending_goal", "400"))
-    new_goal = st.number_input("Weekly goal", min_value=0.0, step=10.0, value=current_goal, format="%.2f")
-    if st.button("Save weekly goal"):
-        db.set_setting("weekly_spending_goal", str(new_goal))
+    wg1, wg2, wg3 = st.columns(3)
+    needs_goal = wg1.number_input(
+        "Needs weekly goal", min_value=0.0, step=10.0,
+        value=float(db.get_setting("weekly_goal_needs", "200")), format="%.2f",
+    )
+    wants_goal = wg2.number_input(
+        "Wants weekly goal", min_value=0.0, step=10.0,
+        value=float(db.get_setting("weekly_goal_wants", "200")), format="%.2f",
+    )
+    total_goal = wg3.number_input(
+        "Total weekly goal", min_value=0.0, step=10.0,
+        value=float(db.get_setting("weekly_goal_total", "400")), format="%.2f",
+    )
+    if st.button("Save weekly goals"):
+        db.set_setting("weekly_goal_needs", str(needs_goal))
+        db.set_setting("weekly_goal_wants", str(wants_goal))
+        db.set_setting("weekly_goal_total", str(total_goal))
         st.success("Saved.")
         st.rerun()

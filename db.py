@@ -36,7 +36,9 @@ _SEED_EXPENSE_GROUPS = {
 _SEED_INCOME_CATEGORIES = ["Salary", "Side Income", "Government", "Other Income"]
 
 DEFAULT_SETTINGS = {
-    "weekly_spending_goal": "400",
+    "weekly_goal_needs": "200",
+    "weekly_goal_wants": "200",
+    "weekly_goal_total": "400",
 }
 
 
@@ -187,7 +189,8 @@ def init_db() -> None:
                 category TEXT NOT NULL,
                 description TEXT,
                 amount REAL NOT NULL CHECK (amount > 0),
-                frequency TEXT NOT NULL CHECK (frequency IN ('weekly', 'biweekly', 'monthly', 'yearly')),
+                frequency_interval INTEGER NOT NULL CHECK (frequency_interval > 0),
+                frequency_unit TEXT NOT NULL CHECK (frequency_unit IN ('day', 'week', 'month')),
                 start_date TEXT NOT NULL,
                 next_due_date TEXT NOT NULL,
                 active INTEGER NOT NULL DEFAULT 1,
@@ -195,6 +198,54 @@ def init_db() -> None:
             )
             """
         )
+        # Migrate a pre-existing table still using the old fixed-enum `frequency` column
+        # (weekly/biweekly/monthly/yearly) to frequency_interval + frequency_unit, which
+        # supports any "every N days/weeks/months" schedule instead of only those four presets.
+        # Rebuilding the table (rather than ALTER ... DROP COLUMN) is what actually removes the
+        # old CHECK constraint, which would otherwise reject any custom interval.
+        rec_cols = [r["name"] for r in conn.execute("SELECT name FROM pragma_table_info('recurring_transactions')")]
+        if "frequency" in rec_cols and "frequency_interval" not in rec_cols:
+            legacy_map = {
+                "weekly": (1, "week"), "biweekly": (2, "week"),
+                "monthly": (1, "month"), "yearly": (12, "month"),
+            }
+            old_rows = conn.execute("SELECT * FROM recurring_transactions").fetchall()
+            # Build the replacement under a temp name and drop the original directly (never
+            # RENAME the original table away) -- SQLite auto-rewrites *other* tables' FK clauses
+            # to follow a renamed table, so renaming "recurring_transactions" itself, even as a
+            # throwaway intermediate step, silently repoints transactions.recurring_id's FK at
+            # whatever it was renamed to. Once that intermediate table is dropped, the FK is left
+            # referencing a name that no longer exists, breaking every future INSERT INTO
+            # transactions. Creating the new table under its own temp name sidesteps this
+            # entirely, since nothing references that temp name to begin with.
+            conn.execute(
+                """
+                CREATE TABLE recurring_transactions_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    type TEXT NOT NULL CHECK (type IN ('income', 'expense')),
+                    category TEXT NOT NULL,
+                    description TEXT,
+                    amount REAL NOT NULL CHECK (amount > 0),
+                    frequency_interval INTEGER NOT NULL CHECK (frequency_interval > 0),
+                    frequency_unit TEXT NOT NULL CHECK (frequency_unit IN ('day', 'week', 'month')),
+                    start_date TEXT NOT NULL,
+                    next_due_date TEXT NOT NULL,
+                    active INTEGER NOT NULL DEFAULT 1,
+                    goal_id INTEGER REFERENCES savings_goals(id) ON DELETE SET NULL
+                )
+                """
+            )
+            for r in old_rows:
+                interval, unit = legacy_map.get(r["frequency"], (1, "month"))
+                conn.execute(
+                    "INSERT INTO recurring_transactions_new (id, type, category, description, amount, "
+                    "frequency_interval, frequency_unit, start_date, next_due_date, active, goal_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (r["id"], r["type"], r["category"], r["description"], r["amount"], interval, unit,
+                     r["start_date"], r["next_due_date"], r["active"], r["goal_id"]),
+                )
+            conn.execute("DROP TABLE recurring_transactions")
+            conn.execute("ALTER TABLE recurring_transactions_new RENAME TO recurring_transactions")
         # Link generated transactions back to the rule that created them (nullable — manual
         # transactions and anything created before this feature existed just have NULL here).
         # Uses the pragma_table_info() table-valued function (portable SQL) rather than a bare
@@ -205,6 +256,39 @@ def init_db() -> None:
                 "ALTER TABLE transactions ADD COLUMN recurring_id "
                 "INTEGER REFERENCES recurring_transactions(id) ON DELETE SET NULL"
             )
+
+        # Self-healing repair: an earlier version of the recurring_transactions migration above
+        # renamed that table away as an intermediate step, which (per the comment above) silently
+        # rewrote this column's FK to follow the rename -- leaving it referencing a name that no
+        # longer exists once that intermediate table was dropped, and breaking every INSERT INTO
+        # transactions. Detect that dangling reference directly from the stored DDL and rebuild
+        # the table with a correct FK, preserving every row exactly.
+        txn_ddl_row = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'transactions'").fetchone()
+        if txn_ddl_row and "recurring_transactions_old" in txn_ddl_row["sql"]:
+            old_txn_rows = conn.execute("SELECT * FROM transactions").fetchall()
+            conn.execute(
+                """
+                CREATE TABLE transactions_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date TEXT NOT NULL,
+                    type TEXT NOT NULL CHECK (type IN ('income', 'expense')),
+                    category TEXT NOT NULL,
+                    description TEXT,
+                    amount REAL NOT NULL CHECK (amount > 0),
+                    goal_id INTEGER REFERENCES savings_goals(id) ON DELETE SET NULL,
+                    recurring_id INTEGER REFERENCES recurring_transactions(id) ON DELETE SET NULL
+                )
+                """
+            )
+            for r in old_txn_rows:
+                conn.execute(
+                    "INSERT INTO transactions_new (id, date, type, category, description, amount, "
+                    "goal_id, recurring_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (r["id"], r["date"], r["type"], r["category"], r["description"], r["amount"],
+                     r["goal_id"], r["recurring_id"]),
+                )
+            conn.execute("DROP TABLE transactions")
+            conn.execute("ALTER TABLE transactions_new RENAME TO transactions")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS categories (
@@ -410,28 +494,30 @@ def delete_category(name: str) -> None:
 
 # ------------------------------------------------------------ recurring transactions
 def add_recurring(
-    type_: str, category: str, description: str, amount: float, frequency: str,
-    start_date: str, goal_id: int | None = None,
+    type_: str, category: str, description: str, amount: float,
+    frequency_interval: int, frequency_unit: str, start_date: str, goal_id: int | None = None,
 ) -> int:
     with get_conn() as conn:
         cur = conn.execute(
             "INSERT INTO recurring_transactions "
-            "(type, category, description, amount, frequency, start_date, next_due_date, active, goal_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
-            (type_, category, description, amount, frequency, start_date, start_date, goal_id),
+            "(type, category, description, amount, frequency_interval, frequency_unit, "
+            "start_date, next_due_date, active, goal_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+            (type_, category, description, amount, frequency_interval, frequency_unit,
+             start_date, start_date, goal_id),
         )
         return cur.lastrowid
 
 
 def update_recurring(
-    rule_id: int, category: str, description: str, amount: float, frequency: str,
-    next_due_date: str, active: bool,
+    rule_id: int, category: str, description: str, amount: float,
+    frequency_interval: int, frequency_unit: str, next_due_date: str, active: bool,
 ) -> None:
     with get_conn() as conn:
         conn.execute(
             "UPDATE recurring_transactions SET category = ?, description = ?, amount = ?, "
-            "frequency = ?, next_due_date = ?, active = ? WHERE id = ?",
-            (category, description, amount, frequency, next_due_date, int(active), rule_id),
+            "frequency_interval = ?, frequency_unit = ?, next_due_date = ?, active = ? WHERE id = ?",
+            (category, description, amount, frequency_interval, frequency_unit,
+             next_due_date, int(active), rule_id),
         )
 
 
