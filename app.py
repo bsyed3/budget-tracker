@@ -814,17 +814,20 @@ elif page == "Transactions":
         st.session_state.setdefault("txn_page", 1)
         st.session_state.txn_page = min(st.session_state.txn_page, total_pages)
 
-        pcol1, pcol2, pcol3 = st.columns([1, 2, 1])
-        if pcol1.button("◀ Prev", disabled=st.session_state.txn_page <= 1):
-            st.session_state.txn_page -= 1
-            st.rerun()
-        pcol2.markdown(
-            f"<div style='text-align:center;padding-top:6px;'>Page {st.session_state.txn_page} of {total_pages}</div>",
-            unsafe_allow_html=True,
-        )
-        if pcol3.button("Next ▶", disabled=st.session_state.txn_page >= total_pages):
-            st.session_state.txn_page += 1
-            st.rerun()
+        def render_pagination(key_suffix: str) -> None:
+            pcol1, pcol2, pcol3 = st.columns([1, 2, 1])
+            if pcol1.button("◀ Prev", disabled=st.session_state.txn_page <= 1, key=f"txn_prev_{key_suffix}"):
+                st.session_state.txn_page -= 1
+                st.rerun()
+            pcol2.markdown(
+                f"<div style='text-align:center;padding-top:6px;'>Page {st.session_state.txn_page} of {total_pages}</div>",
+                unsafe_allow_html=True,
+            )
+            if pcol3.button("Next ▶", disabled=st.session_state.txn_page >= total_pages, key=f"txn_next_{key_suffix}"):
+                st.session_state.txn_page += 1
+                st.rerun()
+
+        render_pagination("top")
 
         start_i = (st.session_state.txn_page - 1) * PAGE_SIZE
         page_df = filtered.iloc[start_i : start_i + PAGE_SIZE]
@@ -854,6 +857,8 @@ elif page == "Transactions":
                                 edit_transaction_dialog(row)
                             if st.button("Delete", key=f"txn_del_{row['id']}", use_container_width=True):
                                 delete_transaction_dialog(row)
+
+        render_pagination("bottom")
 
 # ========================================================================= Recurring
 elif page == "Recurring Transactions":
