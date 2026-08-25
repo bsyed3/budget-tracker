@@ -665,7 +665,7 @@ def set_setting(key: str, value: str) -> None:
 # plus which savings goals' contributions count against it (e.g. accounts inside the same TFSA).
 def get_tfsa_room() -> tuple[float, str, list[int]]:
     """(anchor_value, anchor_date, linked_goal_ids). Room remaining = anchor_value minus
-    contributions to the linked goals dated after anchor_date -- see analytics.tfsa_room_remaining."""
+    contributions to the linked goals dated on or after anchor_date -- see analytics.tfsa_room_remaining."""
     value = float(get_setting("tfsa_room_value", "0"))
     anchor_date = get_setting("tfsa_room_anchor_date", "1970-01-01")
     ids_raw = get_setting("tfsa_linked_goal_ids", "")

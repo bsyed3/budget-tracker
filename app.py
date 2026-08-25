@@ -573,17 +573,17 @@ elif page == "Savings":
         st.markdown(f"**Total across all goals** — {money(total_current)} / {money(total_goal)} ({pct_all:.0%})")
         components.colored_progress(pct_all)
 
-        tc1, tc2 = st.columns([5, 1])
         linked_names = [g["name"] for g in goals if g["id"] in tfsa_linked_ids]
+        tc1, tc2 = st.columns([5, 1], vertical_alignment="center")
         with tc1:
             st.markdown(f"**TFSA room remaining** — {money(tfsa_remaining)}")
-            if linked_names:
-                st.caption(f"Decreases as you add money to: {', '.join(linked_names)}")
-            else:
-                st.caption("Not linked to any goals yet — edit to choose which ones count toward it.")
         with tc2:
             if st.button("Edit", key="tfsa_edit_btn"):
                 edit_tfsa_room_dialog()
+        if linked_names:
+            st.caption(f"Decreases as you add money to: {', '.join(linked_names)}")
+        else:
+            st.caption("Not linked to any goals yet — edit to choose which ones count toward it.")
         st.divider()
 
         for i, g in enumerate(goals):
