@@ -135,15 +135,14 @@ if page == "Snapshot":
     st.write("")
 
     savings_categories = {c for c, g in groups.items() if g == "Savings"}
-    upcoming = recurring.upcoming_occurrences(3, exclude_categories=savings_categories)
+    upcoming = recurring.upcoming_occurrences(3, exclude_categories=savings_categories, only_type="expense")
     if not upcoming:
         st.caption("No upcoming recurring transactions — set some up on the Recurring Transactions page.")
     else:
         for occ in upcoming:
             uc1, uc2, uc3 = st.columns([0.9, 2.5, 3])
             with uc1:
-                badge_color = "#0ea5e9" if occ["type"] == "income" else "#64748b"
-                st.markdown(components.tag(occ["type"].capitalize(), badge_color), unsafe_allow_html=True)
+                st.markdown(components.tag("Expense", "#64748b"), unsafe_allow_html=True)
             with uc2:
                 label = occ["category"] + (f" — {occ['description']}" if occ["description"] else "")
                 st.markdown(f"**{label}**")

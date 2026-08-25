@@ -65,6 +65,7 @@ def generate_due_transactions(today: dt.date | None = None) -> int:
 
 def upcoming_occurrences(
     n: int = 3, today: dt.date | None = None, exclude_categories: set[str] | None = None,
+    only_type: str | None = None,
 ) -> list[dict]:
     """The next n occurrences across every active rule, soonest first.
 
@@ -72,14 +73,17 @@ def upcoming_occurrences(
     generate_due_transactions has run this session, which backfills everything through today).
     Projecting n occurrences forward per rule is always enough to fill a global top-n list,
     since no single rule could ever need to contribute more than n of the n results. Rules whose
-    category is in `exclude_categories` are skipped entirely -- filtering *before* projecting
-    (rather than after) is what keeps that guarantee of "up to n results" intact.
+    category is in `exclude_categories`, or whose type doesn't match `only_type` (if given), are
+    skipped entirely -- filtering *before* projecting (rather than after) is what keeps that
+    guarantee of "up to n results" intact.
     """
     today = today or dt.date.today()
     exclude_categories = exclude_categories or set()
     occurrences = []
     for rule in db.get_recurring_rules():
         if not rule["active"] or rule["category"] in exclude_categories:
+            continue
+        if only_type is not None and rule["type"] != only_type:
             continue
         d = dt.date.fromisoformat(rule["next_due_date"])
         for _ in range(n):
