@@ -607,7 +607,13 @@ elif page == "Transactions":
             if amount <= 0:
                 st.error("Amount must be greater than zero.")
             else:
-                goal_id = txn["goal_id"] if category == txn["category"] else None
+                raw_goal_id = txn["goal_id"] if category == txn["category"] else None
+                # txn comes from a pandas DataFrame -- a column with any real goal_id mixed with
+                # NULLs gets upcast to float64, so a missing goal_id arrives here as NaN rather
+                # than None. Turso's wire protocol rejects non-finite floats outright (unlike
+                # local sqlite3, which silently tolerates it), so this must be normalized back to
+                # a real None before hitting the database.
+                goal_id = None if pd.isna(raw_goal_id) else int(raw_goal_id)
                 db.update_transaction(tid, date.isoformat(), type_, category, description, amount, goal_id)
                 st.rerun()
 
