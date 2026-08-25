@@ -79,7 +79,7 @@ def compare_bar(compare_df: pd.DataFrame, colors: dict[str, str], height: int = 
         alt.Chart(long_df)
         .mark_bar()
         .encode(
-            x=alt.X("Category:N", title=None, sort=list(compare_df.index), axis=alt.Axis(labelAngle=-40)),
+            x=alt.X("Category:N", title=None, sort=list(compare_df.index), axis=CATEGORY_AXIS),
             xOffset=alt.XOffset("Series:N", sort=domain),
             y=alt.Y("Amount:Q", title=None, axis=MONEY_AXIS),
             color=alt.Color("Series:N", scale=alt.Scale(domain=domain, range=range_), legend=alt.Legend(title=None, orient="top")),

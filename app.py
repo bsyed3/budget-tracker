@@ -497,9 +497,18 @@ elif page == "Savings":
         c1, c2, c3 = st.columns(3)
         goal_amount = c1.number_input("Target amount", min_value=0.0, step=100.0, value=float(goal["goal_amount"]), format="%.2f")
         monthly_target = c2.number_input("Monthly target", min_value=0.0, step=10.0, value=float(goal["monthly_target"]), format="%.2f")
-        starting_amount = c3.number_input("Starting balance", min_value=0.0, step=10.0, value=float(goal["starting_amount"]), format="%.2f")
+        current_amount = c3.number_input(
+            "Current amount", min_value=0.0, step=10.0,
+            value=float(analytics.savings_current_amount(goal, df)), format="%.2f",
+        )
+        st.caption(
+            "Updates the actual current total (recorded as today's weekly snapshot), not the "
+            "original starting balance. For a specific past week/month, use \"Record/Edit "
+            "Snapshot\" instead."
+        )
         if st.button("Save changes", type="primary"):
-            db.update_savings_goal(goal["id"], goal_amount, monthly_target, starting_amount)
+            db.update_savings_goal(goal["id"], goal_amount, monthly_target, goal["starting_amount"])
+            db.add_savings_snapshot(goal["id"], "weekly", dt.date.today().isoformat(), current_amount)
             st.rerun()
 
     @st.dialog("Delete Savings Goal")
@@ -659,33 +668,6 @@ elif page == "Savings":
         charts.single_series_bar(
             savings_by_month, x_col="month_label", y_col="amount", x_order=sm_order, color=db.GROUP_COLORS["Savings"]
         )
-
-    st.divider()
-    st.subheader("Add a Contribution")
-    savings_categories = [c for c, g in groups.items() if g == "Savings"]
-    if goals and savings_categories:
-        with st.form("contribute", clear_on_submit=True):
-            c1, c2 = st.columns(2)
-            goal_name = c1.selectbox("Goal", [g["name"] for g in goals])
-            amount = c2.number_input("Amount", min_value=0.0, step=10.0, format="%.2f")
-            c3, c4 = st.columns(2)
-            category = c3.selectbox("Category", savings_categories)
-            date = c4.date_input("Date", value=dt.date.today())
-            description = st.text_input("Description (optional)")
-            if st.form_submit_button("Add contribution"):
-                if amount <= 0:
-                    st.error("Amount must be greater than zero.")
-                else:
-                    goal_id = next(g["id"] for g in goals if g["name"] == goal_name)
-                    db.add_transaction(
-                        date.isoformat(), "expense", category, description or goal_name, amount, goal_id,
-                    )
-                    st.success(f"Added {money(amount)} to {goal_name}")
-                    st.rerun()
-    elif not savings_categories:
-        st.caption("No 'Savings' group category exists yet — add or assign one on the Settings page.")
-    else:
-        st.caption("Add a goal first to log contributions toward it.")
 
 # ===================================================================== Transactions
 elif page == "Transactions":
