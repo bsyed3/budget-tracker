@@ -542,6 +542,27 @@ elif page == "Savings":
             st.success("Snapshot saved.")
             st.rerun()
 
+    tfsa_value, tfsa_anchor_date, tfsa_linked_ids = db.get_tfsa_room()
+    tfsa_remaining = analytics.tfsa_room_remaining(df, tfsa_value, tfsa_anchor_date, tfsa_linked_ids)
+
+    @st.dialog("Edit TFSA Room")
+    def edit_tfsa_room_dialog():
+        st.caption(
+            "Setting a new value resets the tracking point to today -- contributions you've "
+            "already made won't be subtracted from it, only ones made from today onward will."
+        )
+        new_value = st.number_input(
+            "TFSA room remaining", min_value=0.0, step=50.0, value=float(tfsa_remaining), format="%.2f"
+        )
+        goal_names_all = [g["name"] for g in goals]
+        default_linked = [g["name"] for g in goals if g["id"] in tfsa_linked_ids]
+        selected = st.multiselect("Counts contributions from", goal_names_all, default=default_linked)
+        if st.button("Save", type="primary"):
+            selected_ids = [g["id"] for g in goals if g["name"] in selected]
+            db.set_tfsa_room(new_value, dt.date.today().isoformat(), selected_ids)
+            st.success("Saved.")
+            st.rerun()
+
     st.subheader("Savings Goals")
     if not goals:
         st.info("No savings goals yet — add one below.")
@@ -551,6 +572,18 @@ elif page == "Savings":
         pct_all = min(total_current / total_goal, 1.0) if total_goal > 0 else 0.0
         st.markdown(f"**Total across all goals** — {money(total_current)} / {money(total_goal)} ({pct_all:.0%})")
         components.colored_progress(pct_all)
+
+        tc1, tc2 = st.columns([5, 1])
+        linked_names = [g["name"] for g in goals if g["id"] in tfsa_linked_ids]
+        with tc1:
+            st.markdown(f"**TFSA room remaining** — {money(tfsa_remaining)}")
+            if linked_names:
+                st.caption(f"Decreases as you add money to: {', '.join(linked_names)}")
+            else:
+                st.caption("Not linked to any goals yet — edit to choose which ones count toward it.")
+        with tc2:
+            if st.button("Edit", key="tfsa_edit_btn"):
+                edit_tfsa_room_dialog()
         st.divider()
 
         for i, g in enumerate(goals):

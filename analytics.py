@@ -182,6 +182,18 @@ def savings_current_amount(goal_row, df: pd.DataFrame) -> float:
     return goal_row["starting_amount"] + contributed
 
 
+def tfsa_room_remaining(df: pd.DataFrame, anchor_value: float, anchor_date: str, linked_goal_ids: list[int]) -> float:
+    """Anchor value minus contributions (expense transactions linked to one of the given goals)
+    dated strictly after the anchor date -- setting a new anchor resets the clock, so anything
+    logged before/on that date no longer counts against it."""
+    if df.empty or not linked_goal_ids:
+        return anchor_value
+    anchor = pd.Timestamp(anchor_date)
+    mask = df["goal_id"].isin(linked_goal_ids) & (df["type"] == "expense") & (df["date"] > anchor)
+    contributed_since = df.loc[mask, "amount"].sum()
+    return anchor_value - contributed_since
+
+
 def savings_snapshot_series(snapshots: list, goals: list) -> pd.DataFrame:
     """Long-format period_date/goal/amount, for the multi-goal balance-over-time chart."""
     if not snapshots:

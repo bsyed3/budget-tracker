@@ -658,3 +658,25 @@ def set_setting(key: str, value: str) -> None:
             """,
             (key, value),
         )
+
+
+# ------------------------------------------------------------------- TFSA room
+# Stored as plain settings rows (no new table/column) -- an anchor value + the date it was set,
+# plus which savings goals' contributions count against it (e.g. accounts inside the same TFSA).
+def get_tfsa_room() -> tuple[float, str, list[int]]:
+    """(anchor_value, anchor_date, linked_goal_ids). Room remaining = anchor_value minus
+    contributions to the linked goals dated after anchor_date -- see analytics.tfsa_room_remaining."""
+    value = float(get_setting("tfsa_room_value", "0"))
+    anchor_date = get_setting("tfsa_room_anchor_date", "1970-01-01")
+    ids_raw = get_setting("tfsa_linked_goal_ids", "")
+    linked_ids = [int(x) for x in ids_raw.split(",") if x.strip()]
+    return value, anchor_date, linked_ids
+
+
+def set_tfsa_room(value: float, anchor_date: str, linked_goal_ids: list[int]) -> None:
+    """Setting a new value resets the anchor date to `anchor_date` (normally today), so
+    contributions already made don't retroactively count against the new value -- only ones
+    made after this point do."""
+    set_setting("tfsa_room_value", str(value))
+    set_setting("tfsa_room_anchor_date", anchor_date)
+    set_setting("tfsa_linked_goal_ids", ",".join(str(i) for i in linked_goal_ids))
