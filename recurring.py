@@ -43,7 +43,11 @@ def next_occurrence(d: dt.date, interval: int, unit: str) -> dt.date:
 
 
 def generate_due_transactions(today: dt.date | None = None) -> int:
-    """Create a transaction for every rule occurrence up through today. Returns count created."""
+    """Create a transaction for every rule occurrence up through today. Returns count created.
+
+    Checks for an existing occurrence before inserting, so running this more than once for the
+    same rule/date (e.g. two tabs or devices open at once) skips instead of double-charging.
+    """
     today = today or dt.date.today()
     created = 0
     for rule in db.get_recurring_rules():
@@ -52,11 +56,12 @@ def generate_due_transactions(today: dt.date | None = None) -> int:
         next_due = dt.date.fromisoformat(rule["next_due_date"])
         guard = 0
         while next_due <= today and guard < _MAX_BACKFILL:
-            db.add_transaction(
-                next_due.isoformat(), rule["type"], rule["category"], rule["description"] or "",
-                rule["amount"], rule["goal_id"], recurring_id=rule["id"],
-            )
-            created += 1
+            if not db.recurring_occurrence_exists(rule["id"], next_due.isoformat()):
+                db.add_transaction(
+                    next_due.isoformat(), rule["type"], rule["category"], rule["description"] or "",
+                    rule["amount"], rule["goal_id"], recurring_id=rule["id"],
+                )
+                created += 1
             next_due = next_occurrence(next_due, rule["frequency_interval"], rule["frequency_unit"])
             guard += 1
         db.set_recurring_next_due(rule["id"], next_due.isoformat())

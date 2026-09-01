@@ -567,6 +567,18 @@ def get_recurring_rules() -> list:
         return conn.execute("SELECT * FROM recurring_transactions ORDER BY next_due_date").fetchall()
 
 
+def recurring_occurrence_exists(recurring_id: int, date: str) -> bool:
+    """Whether a rule has already generated a transaction for this exact date -- guards against
+    creating the same occurrence twice if generate_due_transactions() ever runs more than once
+    before a rule's next_due_date is durably advanced (e.g. two tabs/devices open at once, or a
+    reload right after a network hiccup)."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM transactions WHERE recurring_id = ? AND date = ? LIMIT 1", (recurring_id, date)
+        ).fetchone()
+    return row is not None
+
+
 # ----------------------------------------------------------------- savings goals
 def add_savings_goal(
     name: str, goal_amount: float, monthly_target: float, starting_amount: float, starting_date: str
