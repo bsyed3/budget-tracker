@@ -193,6 +193,11 @@ def group_by_month_bar(long_df: pd.DataFrame, x_order: list[str], colors: dict[s
         return
     domain = list(colors.keys())
     range_ = list(colors.values())
+    # A numeric rank matching domain order, used only for the "order" encoding below (alt.Order's
+    # sort only accepts "ascending"/"descending", not an explicit domain list, so a field that
+    # already sorts numerically in the order we want is the way to pin it).
+    long_df = long_df.copy()
+    long_df["_group_rank"] = long_df["group"].map({g: i for i, g in enumerate(domain)})
     y_axis = alt.Axis(format="%") if normalize else MONEY_AXIS
     text_field = "pct" if normalize else "amount"
     text_format = ".0%" if normalize else "$,.0f"
@@ -202,9 +207,18 @@ def group_by_month_bar(long_df: pd.DataFrame, x_order: list[str], colors: dict[s
         else alt.Tooltip("amount:Q", title="Amount", format="$,.2f")
     )
 
+    # order=... on the shared base is what pins a consistent stack order across both layers.
+    # "bars" has its own color encoding, which alone gives Vega-Lite a deterministic order for
+    # that layer -- but "labels" has no color/detail field (it's a constant color, not
+    # data-driven), so left on its own Vega-Lite has no grouping key for that layer's stack and
+    # falls back to sorting by the stacked value itself, independently of whatever order "bars"
+    # used. That silently swapped which label lands on which segment whenever two groups' amounts
+    # were close enough to sort differently than the domain order (exactly what happened with
+    # Needs vs. Wants). Giving both layers the same explicit order fixes them to agree.
     base = alt.Chart(long_df).encode(
         x=alt.X("month_label:N", title=None, sort=x_order),
         y=alt.Y("amount:Q", title=None, axis=y_axis, stack="normalize" if normalize else "zero"),
+        order=alt.Order("_group_rank:Q", sort="ascending"),
     )
     bars = base.mark_bar().encode(
         color=alt.Color("group:N", scale=alt.Scale(domain=domain, range=range_), legend=alt.Legend(title=None, orient="top")),
