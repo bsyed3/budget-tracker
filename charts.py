@@ -10,8 +10,6 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from components import theme_text_color
-
 MONEY_AXIS = alt.Axis(format="$,.0f")
 # Force every category label to show, even if that means some crowding — dropping labels on a
 # categorical axis (unlike a dense time axis) makes bars unidentifiable.
@@ -184,53 +182,34 @@ def group_by_month_bar(long_df: pd.DataFrame, x_order: list[str], colors: dict[s
     plus a pre-computed 'pct' column — each group's share of that month's total).
 
     `normalize=True` shows each month as a 100%-stacked bar (share of that month) instead of
-    absolute dollars, and the tooltip/labels show the percentage instead of the dollar amount.
-    Values are also printed directly on each bar segment, not just in the hover tooltip — on
-    mobile there's no hover, so tap-only tooltips would otherwise be unreadable.
+    absolute dollars, and the tooltip shows the percentage instead of the dollar amount. Values
+    only show on hover (no permanent on-bar labels) -- kept simple to avoid a label ever landing
+    on the wrong segment; the color plus the legend already identify each one.
     """
     if long_df.empty:
         st.caption("No data yet.")
         return
     domain = list(colors.keys())
     range_ = list(colors.values())
-    # A numeric rank matching domain order, used only for the "order" encoding below (alt.Order's
-    # sort only accepts "ascending"/"descending", not an explicit domain list, so a field that
-    # already sorts numerically in the order we want is the way to pin it).
-    long_df = long_df.copy()
-    long_df["_group_rank"] = long_df["group"].map({g: i for i, g in enumerate(domain)})
     y_axis = alt.Axis(format="%") if normalize else MONEY_AXIS
-    text_field = "pct" if normalize else "amount"
-    text_format = ".0%" if normalize else "$,.0f"
     value_tooltip = (
         alt.Tooltip("pct:Q", title="Share", format=".0%")
         if normalize
         else alt.Tooltip("amount:Q", title="Amount", format="$,.2f")
     )
 
-    # order=... on the shared base is what pins a consistent stack order across both layers.
-    # "bars" has its own color encoding, which alone gives Vega-Lite a deterministic order for
-    # that layer -- but "labels" has no color/detail field (it's a constant color, not
-    # data-driven), so left on its own Vega-Lite has no grouping key for that layer's stack and
-    # falls back to sorting by the stacked value itself, independently of whatever order "bars"
-    # used. That silently swapped which label lands on which segment whenever two groups' amounts
-    # were close enough to sort differently than the domain order (exactly what happened with
-    # Needs vs. Wants). Giving both layers the same explicit order fixes them to agree.
-    base = alt.Chart(long_df).encode(
-        x=alt.X("month_label:N", title=None, sort=x_order),
-        y=alt.Y("amount:Q", title=None, axis=y_axis, stack="normalize" if normalize else "zero"),
-        order=alt.Order("_group_rank:Q", sort="ascending"),
+    chart = (
+        alt.Chart(long_df)
+        .mark_bar()
+        .encode(
+            x=alt.X("month_label:N", title=None, sort=x_order),
+            y=alt.Y("amount:Q", title=None, axis=y_axis, stack="normalize" if normalize else "zero"),
+            color=alt.Color("group:N", scale=alt.Scale(domain=domain, range=range_), legend=alt.Legend(title=None, orient="top")),
+            tooltip=[alt.Tooltip("month_label:N", title="Month"), alt.Tooltip("group:N", title="Group"), value_tooltip],
+        )
+        .properties(height=height)
     )
-    bars = base.mark_bar().encode(
-        color=alt.Color("group:N", scale=alt.Scale(domain=domain, range=range_), legend=alt.Legend(title=None, orient="top")),
-        tooltip=[alt.Tooltip("month_label:N", title="Month"), alt.Tooltip("group:N", title="Group"), value_tooltip],
-    )
-    labels = (
-        base.transform_filter("datum.amount > 0")
-        .mark_text(color=theme_text_color(), fontWeight="bold", fontSize=11)
-        .encode(text=alt.Text(f"{text_field}:Q", format=text_format))
-    )
-
-    st.altair_chart((bars + labels).properties(height=height), use_container_width=True)
+    st.altair_chart(chart, use_container_width=True)
 
 
 def single_series_bar(df: pd.DataFrame, x_col: str, y_col: str, x_order: list[str],
