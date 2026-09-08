@@ -365,7 +365,9 @@ elif page == "Breakdown":
         st.info("No expenses this period.")
     else:
         by_cat = expense_df.groupby("category")["amount"].sum().sort_values(ascending=False)
-        charts.spending_category_pie(by_cat, db.SPENDING_CHART_GROUPS, db.SPENDING_GROUP_SHADES, db.SPENDING_GROUP_OTHER_COLOR)
+        charts.spending_category_pie(
+            by_cat, db.get_spending_chart_groups(), db.SPENDING_GROUP_SHADES, db.SPENDING_GROUP_OTHER_COLOR
+        )
 
     st.divider()
     st.subheader("Income by Category")
@@ -996,13 +998,16 @@ elif page == "Recurring Transactions":
 # ========================================================================= Settings
 elif page == "Settings":
     cats = db.get_categories()
+    expense_cats_list = [c for c in cats if c["type"] == "expense"]
+    income_cats_list = [c for c in cats if c["type"] == "income"]
+    CATEGORY_TYPE_OPTIONS = ["—"] + db.CATEGORY_TYPES
 
-    @st.dialog("Add a Category")
-    def add_category_dialog():
+    @st.dialog("Add an Expense Category")
+    def add_expense_category_dialog():
         name = st.text_input("Category name")
         c1, c2 = st.columns(2)
-        new_type = c1.selectbox("Type", ["expense", "income"], format_func=str.capitalize)
-        new_group = c2.selectbox("Group (expense only)", db.GROUP_NAMES)
+        new_group = c1.selectbox("Categorization", db.GROUP_NAMES)
+        new_cat_type = c2.selectbox("Category Type", CATEGORY_TYPE_OPTIONS)
         if st.button("Add", type="primary"):
             existing_names = {c["name"] for c in db.get_categories()}
             if not name.strip():
@@ -1010,7 +1015,23 @@ elif page == "Settings":
             elif name.strip() in existing_names:
                 st.error("That category already exists.")
             else:
-                db.add_category(name.strip(), new_type, new_group if new_type == "expense" else None)
+                db.add_category(
+                    name.strip(), "expense", new_group,
+                    new_cat_type if new_cat_type != "—" else None,
+                )
+                st.rerun()
+
+    @st.dialog("Add an Income Category")
+    def add_income_category_dialog():
+        name = st.text_input("Category name")
+        if st.button("Add", type="primary"):
+            existing_names = {c["name"] for c in db.get_categories()}
+            if not name.strip():
+                st.error("Please name the category.")
+            elif name.strip() in existing_names:
+                st.error("That category already exists.")
+            else:
+                db.add_category(name.strip(), "income", None)
                 st.rerun()
 
     @st.dialog("Edit Category")
@@ -1021,13 +1042,22 @@ elif page == "Settings":
             "Type", ["expense", "income"], index=0 if cat["type"] == "expense" else 1, format_func=str.capitalize
         )
         new_group = None
+        new_cat_type = None
         if new_type == "expense":
-            current = cat["group_name"] or "Wants"
-            new_group = st.selectbox(
-                "Group", db.GROUP_NAMES, index=db.GROUP_NAMES.index(current) if current in db.GROUP_NAMES else 0
+            c1, c2 = st.columns(2)
+            current_group = cat["group_name"] or "Wants"
+            new_group = c1.selectbox(
+                "Categorization", db.GROUP_NAMES,
+                index=db.GROUP_NAMES.index(current_group) if current_group in db.GROUP_NAMES else 0,
             )
+            current_cat_type = cat["category_type"] or "—"
+            new_cat_type_raw = c2.selectbox(
+                "Category Type", CATEGORY_TYPE_OPTIONS,
+                index=CATEGORY_TYPE_OPTIONS.index(current_cat_type) if current_cat_type in CATEGORY_TYPE_OPTIONS else 0,
+            )
+            new_cat_type = new_cat_type_raw if new_cat_type_raw != "—" else None
         else:
-            st.caption("Income categories don't have a group.")
+            st.caption("Income categories don't have a Categorization or Category Type.")
 
         if new_type != cat["type"]:
             st.warning(
@@ -1045,7 +1075,7 @@ elif page == "Settings":
                 if clean_name in existing_names:
                     st.error("That category name already exists.")
                 else:
-                    db.update_category(old_name, clean_name, new_type, new_group)
+                    db.update_category(old_name, clean_name, new_type, new_group, new_cat_type)
                     st.rerun()
 
     @st.dialog("Remove Category")
@@ -1066,30 +1096,53 @@ elif page == "Settings":
         "These populate the Add transaction dropdowns. Removing a category doesn't change past "
         "transactions — they keep their original category text."
     )
-    if not cats:
-        st.info("No categories yet — add one below.")
+
+    st.subheader("Expense Categories")
+    if not expense_cats_list:
+        st.info("No expense categories yet — add one below.")
     else:
-        with st.container(key="tablewrap_cat"):
-            with st.container(key="tablehead_cat"):
-                header = st.columns([2.5, 1, 1.5, 0.6])
-                for col, label in zip(header, ["Category", "Type", "Group", ""]):
+        with st.container(key="tablewrap_cat_expense"):
+            with st.container(key="tablehead_cat_expense"):
+                header = st.columns([2, 1.3, 1.5, 0.6])
+                for col, label in zip(header, ["Category", "Categorization", "Category Type", ""]):
                     col.markdown(f"**{label}**")
-            for i, cat in enumerate(cats):
-                with st.container(key=f"hoverrow_cat_{i}"):
-                    c = st.columns([2.5, 1, 1.5, 0.6])
+            for i, cat in enumerate(expense_cats_list):
+                with st.container(key=f"hoverrow_cat_expense_{i}"):
+                    c = st.columns([2, 1.3, 1.5, 0.6])
                     c[0].write(cat["name"])
-                    c[1].write(cat["type"].capitalize())
-                    c[2].write(cat["group_name"] or "—")
+                    c[1].write(cat["group_name"] or "—")
+                    c[2].write(cat["category_type"] or "—")
                     with c[3]:
                         with st.popover("⋮", key=f"cat_pop_{cat['name']}"):
                             if st.button("Edit", key=f"cat_edit_{cat['name']}", use_container_width=True):
                                 edit_category_dialog(cat)
                             if st.button("Delete", key=f"cat_del_{cat['name']}", use_container_width=True):
                                 delete_category_dialog(cat)
+    if st.button("+ Add expense category"):
+        add_expense_category_dialog()
 
     st.divider()
-    if st.button("+ Add category"):
-        add_category_dialog()
+    st.subheader("Income Categories")
+    if not income_cats_list:
+        st.info("No income categories yet — add one below.")
+    else:
+        with st.container(key="tablewrap_cat_income"):
+            with st.container(key="tablehead_cat_income"):
+                header = st.columns([3.8, 0.6])
+                for col, label in zip(header, ["Category", ""]):
+                    col.markdown(f"**{label}**")
+            for i, cat in enumerate(income_cats_list):
+                with st.container(key=f"hoverrow_cat_income_{i}"):
+                    c = st.columns([3.8, 0.6])
+                    c[0].write(cat["name"])
+                    with c[1]:
+                        with st.popover("⋮", key=f"cat_pop_{cat['name']}"):
+                            if st.button("Edit", key=f"cat_edit_{cat['name']}", use_container_width=True):
+                                edit_category_dialog(cat)
+                            if st.button("Delete", key=f"cat_del_{cat['name']}", use_container_width=True):
+                                delete_category_dialog(cat)
+    if st.button("+ Add income category"):
+        add_income_category_dialog()
 
     st.divider()
     st.subheader("Weekly Spending Goals")

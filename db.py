@@ -50,6 +50,13 @@ SPENDING_CHART_GROUPS: dict[str, list[str]] = {
     "Miscellaneous": ["Miscellaneous"],
 }
 
+# The valid values for an expense category's "Category Type" (Settings page), in display order.
+# SPENDING_CHART_GROUPS above is only the one-time seed for categories that don't have one set
+# yet -- the actual live assignment is the categories table's category_type column, editable per
+# category on the Settings page, so a category can move between types (or a new one appear)
+# without another code change.
+CATEGORY_TYPES = list(SPENDING_CHART_GROUPS.keys())
+
 # One shade per category, in the same order as SPENDING_CHART_GROUPS[group], dark -> light.
 SPENDING_GROUP_SHADES: dict[str, list[str]] = {
     "Transportation": ["#78350f", "#b45309", "#d97706", "#f59e0b", "#fbbf24"],
@@ -92,6 +99,18 @@ def spending_category_color(category: str) -> str:
     shades = SPENDING_GROUP_SHADES.get(group) or SPENDING_GROUP_SHADES["Miscellaneous"]
     idx = cats.index(category) if category in cats else 0
     return shades[idx] if idx < len(shades) else shades[0]
+
+
+def get_spending_chart_groups() -> dict[str, list[str]]:
+    """Live category_type -> [category names] mapping, built from the categories table (not the
+    static SPENDING_CHART_GROUPS seed) -- reflects whatever the user has set on the Settings page.
+    Expense categories with no Category Type set (or the Savings-group category) fall back to
+    Miscellaneous so they still render somewhere on the Spending by Category chart."""
+    result: dict[str, list[str]] = {g: [] for g in CATEGORY_TYPES}
+    for cat in get_categories("expense"):
+        cat_type = cat["category_type"] if cat["category_type"] in result else "Miscellaneous"
+        result[cat_type].append(cat["name"])
+    return result
 
 
 # Seed data used only the first time the database is created (or to backfill any
@@ -386,6 +405,13 @@ def init_db() -> None:
         # scheme (harmless no-op if none exist). Left in the CHECK constraint above for
         # compatibility with tables created before this change.
         conn.execute("UPDATE categories SET group_name = 'Needs' WHERE group_name = 'Donations'")
+        # "Category Type" (Transportation, Bills, etc. -- see SPENDING_CHART_GROUPS) is a plain
+        # nullable column rather than a fixed CHECK enum, so the set of types can grow later
+        # without another migration; income categories are never given one (blank is correct
+        # for them, not just "not set yet").
+        cat_cols = [r["name"] for r in conn.execute("SELECT name FROM pragma_table_info('categories')")]
+        if "category_type" not in cat_cols:
+            conn.execute("ALTER TABLE categories ADD COLUMN category_type TEXT")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS settings (
@@ -443,6 +469,21 @@ def init_db() -> None:
                     "INSERT OR IGNORE INTO categories (name, type, group_name) VALUES (?, ?, ?)",
                     (row["category"], row["type"], group),
                 )
+
+        # Backfill Category Type for expense categories that don't have one yet (new categories,
+        # or ones that existed before this column did) using the built-in starting assignment.
+        # Income categories are skipped entirely -- Category Type doesn't apply to them. Neither
+        # does the Savings-group category (it's excluded from the Spending by Category pie
+        # entirely), so it's left blank rather than defaulting to "Miscellaneous".
+        untyped = conn.execute(
+            "SELECT name FROM categories WHERE type = 'expense' AND category_type IS NULL "
+            "AND (group_name IS NULL OR group_name != 'Savings')"
+        ).fetchall()
+        for row in untyped:
+            conn.execute(
+                "UPDATE categories SET category_type = ? WHERE name = ?",
+                (spending_chart_group_for(row["name"]), row["name"]),
+            )
 
         existing_settings = {r["key"] for r in conn.execute("SELECT key FROM settings")}
         for key, value in DEFAULT_SETTINGS.items():
@@ -531,11 +572,11 @@ def get_category_groups() -> dict[str, str]:
     return {r["name"]: (r["group_name"] or "Wants") for r in rows}
 
 
-def add_category(name: str, type_: str, group_name: str | None) -> None:
+def add_category(name: str, type_: str, group_name: str | None, category_type: str | None = None) -> None:
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO categories (name, type, group_name) VALUES (?, ?, ?)",
-            (name, type_, group_name if type_ == "expense" else None),
+            "INSERT INTO categories (name, type, group_name, category_type) VALUES (?, ?, ?, ?)",
+            (name, type_, group_name if type_ == "expense" else None, category_type if type_ == "expense" else None),
         )
 
 
@@ -544,7 +585,9 @@ def update_category_group(name: str, group_name: str) -> None:
         conn.execute("UPDATE categories SET group_name = ? WHERE name = ?", (group_name, name))
 
 
-def update_category(old_name: str, new_name: str, type_: str, group_name: str | None) -> None:
+def update_category(
+    old_name: str, new_name: str, type_: str, group_name: str | None, category_type: str | None = None
+) -> None:
     """Rename and/or change a category's type/group, cascading to every place its name or type
     is referenced (transactions, budgets, recurring rules) so historical data stays consistent."""
     with get_conn() as conn:
@@ -560,8 +603,8 @@ def update_category(old_name: str, new_name: str, type_: str, group_name: str | 
             current_name = new_name
 
         conn.execute(
-            "UPDATE categories SET type = ?, group_name = ? WHERE name = ?",
-            (type_, group_name, current_name),
+            "UPDATE categories SET type = ?, group_name = ?, category_type = ? WHERE name = ?",
+            (type_, group_name, category_type if type_ == "expense" else None, current_name),
         )
         if type_ != old_type:
             conn.execute("UPDATE transactions SET type = ? WHERE category = ?", (type_, current_name))
