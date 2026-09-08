@@ -60,7 +60,8 @@ CATEGORY_TYPES = list(SPENDING_CHART_GROUPS.keys())
 # One shade per category, in the same order as SPENDING_CHART_GROUPS[group], dark -> light.
 # Each group gets its own hue family so a category's color always identifies its group at a
 # glance; Giving is true red rather than the teal it used to be, since teal read as too close to
-# Food's green to tell the two groups apart on sight.
+# Food's green to tell the two groups apart on sight. Travel is cyan (rather than its old orange,
+# which sat too close to Transportation's amber family) -- conveniently the hue Giving vacated.
 SPENDING_GROUP_SHADES: dict[str, list[str]] = {
     "Transportation": ["#78350f", "#b45309", "#d97706", "#f59e0b", "#fbbf24"],
     "Bills": ["#1e3a8a", "#1d4ed8", "#3b82f6"],
@@ -68,7 +69,7 @@ SPENDING_GROUP_SHADES: dict[str, list[str]] = {
     "Personal": ["#831843", "#db2777", "#ec4899", "#f9a8d4"],
     "Giving": ["#7f1d1d", "#f87171"],
     "Food": ["#14532d", "#16a34a", "#4ade80"],
-    "Travel": ["#ea580c"],
+    "Travel": ["#0e7490"],
     "Miscellaneous": ["#64748b"],
 }
 
@@ -81,9 +82,15 @@ SPENDING_GROUP_OTHER_COLOR: dict[str, str] = {
     "Personal": "#fbcfe8",
     "Giving": "#fecaca",
     "Food": "#bbf7d0",
-    "Travel": "#fdba74",
+    "Travel": "#a5f3fc",
     "Miscellaneous": "#cbd5e1",
 }
+
+# One flat color per Category Type -- used by the aggregated "one slice per type" view of the
+# Spending by Category chart (as opposed to the per-category-with-shade-families view above).
+# Derived from the same shade families so a group's color identity matches across both views:
+# its darkest shade is also its single aggregated-slice color.
+SPENDING_GROUP_COLOR: dict[str, str] = {group: shades[0] for group, shades in SPENDING_GROUP_SHADES.items()}
 
 
 def spending_chart_group_for(category: str) -> str:

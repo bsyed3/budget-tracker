@@ -355,19 +355,30 @@ elif page == "Breakdown":
 
     st.divider()
     st.subheader("Spending by Category")
-    st.caption(
-        "Excludes Savings contributions. Categories are colored by group (Transportation, Bills, "
-        "etc.); within a group, the smallest are grouped into a \"<Group> - Other\" slice under "
-        "5% of the total -- hover it for a breakdown."
+    spending_view = st.radio(
+        "View", ["By category", "By category type"], horizontal=True,
+        key="spending_by_category_view", label_visibility="collapsed",
     )
     expense_df = scope_df[(scope_df["type"] == "expense") & (scope_df["category"].map(groups) != "Savings")]
     if expense_df.empty:
         st.info("No expenses this period.")
     else:
         by_cat = expense_df.groupby("category")["amount"].sum().sort_values(ascending=False)
-        charts.spending_category_pie(
-            by_cat, db.get_spending_chart_groups(), db.SPENDING_GROUP_SHADES, db.SPENDING_GROUP_OTHER_COLOR
-        )
+        if spending_view == "By category":
+            st.caption(
+                "Excludes Savings contributions. Categories are colored by group (Transportation, "
+                "Bills, etc.); within a group, the smallest are grouped into a \"<Group> - Other\" "
+                "slice under 5% of the total -- hover it for a breakdown."
+            )
+            charts.spending_category_pie(
+                by_cat, db.get_spending_chart_groups(), db.SPENDING_GROUP_SHADES, db.SPENDING_GROUP_OTHER_COLOR
+            )
+        else:
+            st.caption(
+                "Excludes Savings contributions. Each slice is a Category Type (Transportation, "
+                "Bills, etc.) -- hover it for the individual categories inside."
+            )
+            charts.spending_type_pie(by_cat, db.get_spending_chart_groups(), db.SPENDING_GROUP_COLOR)
 
     st.divider()
     st.subheader("Income by Category")

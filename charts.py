@@ -175,6 +175,97 @@ def spending_category_pie(
     st.markdown(legend_html, unsafe_allow_html=True)
 
 
+def spending_type_pie(
+    series: pd.Series, groups: dict[str, list[str]], colors: dict[str, str], height: int = 420,
+) -> None:
+    """Spending by category, aggregated up to one slice per Category Type (Transportation, Food,
+    Giving, etc.) instead of one slice per individual category -- the alternative view to
+    spending_category_pie() above, toggled between on the Breakdown page. Each type gets one
+    fixed color regardless of amount/rank; hovering a slice lists the individual categories
+    inside it, each with its own amount and share.
+
+    The same 5%-of-total cumulative-tail logic as category_pie() folds the smallest Category
+    Types into a single "Other" slice once more than 3 types are present and the running tail
+    drops under 5% of the total -- hovering it lists which types (and their totals) are inside.
+    """
+    if series.empty or series.sum() <= 0:
+        st.caption("No data yet.")
+        return
+    total = series.sum()
+
+    type_totals = []
+    for group, cats_in_group in groups.items():
+        present = series[series.index.isin(cats_in_group)]
+        present = present[present > 0].sort_values(ascending=False)
+        if not present.empty:
+            type_totals.append((group, present))
+    type_totals.sort(key=lambda t: t[1].sum(), reverse=True)
+
+    cutoff = len(type_totals)
+    if len(type_totals) > 3:
+        cumulative = 0.0
+        for i, (_, present) in enumerate(type_totals):
+            cumulative += present.sum()
+            if total - cumulative < _OTHER_THRESHOLD * total:
+                cutoff = i + 1
+                break
+    # A single leftover type isn't grouped with anything -- show it plainly instead of a
+    # one-item "Other".
+    if len(type_totals) - cutoff == 1:
+        cutoff = len(type_totals)
+
+    rows = []
+    for group, present in type_totals[:cutoff]:
+        amount = present.sum()
+        pct = amount / total
+        detail_lines = [group, f"${amount:,.2f} ({pct:.1%})", ""]
+        detail_lines += [f"{cat} - ${amt:,.2f} ({amt / total:.0%})" for cat, amt in present.items()]
+        rows.append({
+            "Category": group, "Amount": amount, "Color": colors.get(group, _OTHER_COLOR),
+            "Detail": "\n".join(detail_lines),
+        })
+
+    leftover = type_totals[cutoff:]
+    if leftover:
+        other_amount = sum(present.sum() for _, present in leftover)
+        other_pct = other_amount / total
+        detail_lines = ["Other", f"${other_amount:,.2f} ({other_pct:.1%})", ""]
+        detail_lines += [f"{group} - ${present.sum():,.2f} ({present.sum() / total:.0%})" for group, present in leftover]
+        rows.append({
+            "Category": "Other", "Amount": other_amount, "Color": _OTHER_COLOR,
+            "Detail": "\n".join(detail_lines),
+        })
+
+    df = pd.DataFrame(rows)
+    domain = df["Category"].tolist()
+    range_ = df["Color"].tolist()
+
+    chart = (
+        alt.Chart(df)
+        .mark_arc()
+        .encode(
+            theta=alt.Theta("Amount:Q", stack=True),
+            color=alt.Color("Category:N", scale=alt.Scale(domain=domain, range=range_), legend=None),
+            tooltip=[alt.Tooltip("Detail:N", title=None)],
+        )
+        .properties(height=height)
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+    # Custom legend (rather than Vega-Lite's built-in one) so each row can show its own $ and %
+    # alongside the swatch, not just the type name.
+    legend_html = ""
+    for _, row in df.iterrows():
+        pct = row["Amount"] / total
+        legend_html += (
+            '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">'
+            f'<div style="width:14px;height:14px;border-radius:3px;background:{row["Color"]};flex-shrink:0;"></div>'
+            f'<div style="font-size:13px;">{row["Category"]} — ${row["Amount"]:,.2f} ({pct:.0%})</div>'
+            '</div>'
+        )
+    st.markdown(legend_html, unsafe_allow_html=True)
+
+
 def compare_bar(compare_df: pd.DataFrame, colors: dict[str, str], height: int = 300) -> None:
     """Side-by-side (not stacked) grouped bars. compare_df: index=Category, columns=series names."""
     if compare_df.empty:
