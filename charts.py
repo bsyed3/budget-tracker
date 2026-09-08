@@ -16,48 +16,40 @@ MONEY_AXIS = alt.Axis(format="$,.0f")
 CATEGORY_AXIS = alt.Axis(labelAngle=-40, labelOverlap=False)
 
 
-def category_bar_by_group(series: pd.Series, group_map: dict[str, str], group_colors: dict[str, str],
-                           height: int = 280) -> None:
-    """One bar per category, colored by each category's group (e.g. Needs=blue, Wants=orange)."""
+_OTHER_COLOR = "#94a3b8"  # neutral gray for the catch-all "Other" slice, distinct from the palette
+_OTHER_THRESHOLD = 0.05  # a category under 5% of the total gets folded into "Other"
+
+
+def category_pie(series: pd.Series, palette: list[str], group_small: bool = True, height: int = 320) -> None:
+    """One slice per category, colored from a flat qualitative palette (no Needs/Wants coloring).
+
+    If there are more than 3 categories, any individually under 5% of the total are combined
+    into a single "Other" slice -- pass group_small=False to disable this and always show every
+    category (e.g. for income, which usually has too few categories for "Other" to make sense).
+    """
     if series.empty or series.sum() <= 0:
         st.caption("No data yet.")
         return
-    data = series.reset_index()
-    data.columns = ["Category", "Amount"]
-    data["Group"] = data["Category"].map(group_map).fillna("Wants")
-    # Only legend groups actually present in this chart's data (e.g. don't show a "Savings"
-    # swatch on a chart that has no Savings bars).
-    present = [g for g in group_colors if g in set(data["Group"])]
-    domain = present
-    range_ = [group_colors[g] for g in present]
-    chart = (
-        alt.Chart(data)
-        .mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
-        .encode(
-            x=alt.X("Category:N", sort="-y", title=None, axis=CATEGORY_AXIS),
-            y=alt.Y("Amount:Q", title=None, axis=MONEY_AXIS),
-            color=alt.Color("Group:N", scale=alt.Scale(domain=domain, range=range_), legend=alt.Legend(title=None, orient="top")),
-            tooltip=[alt.Tooltip("Category:N"), alt.Tooltip("Group:N"), alt.Tooltip("Amount:Q", format="$,.2f")],
-        )
-        .properties(height=height)
-    )
-    st.altair_chart(chart, use_container_width=True)
+    data = series.sort_values(ascending=False)
+    if group_small and len(data) > 3:
+        shares = data / data.sum()
+        small = data[shares < _OTHER_THRESHOLD]
+        if not small.empty:
+            data = pd.concat([data[shares >= _OTHER_THRESHOLD], pd.Series({"Other": small.sum()})])
 
+    df = data.reset_index()
+    df.columns = ["Category", "Amount"]
+    df["Pct"] = df["Amount"] / df["Amount"].sum()
+    domain = df["Category"].tolist()
+    range_ = [_OTHER_COLOR if cat == "Other" else palette[i % len(palette)] for i, cat in enumerate(domain)]
 
-def category_bar_flat(series: pd.Series, color: str, height: int = 280) -> None:
-    """One bar per category, all the same flat color (e.g. Income by category)."""
-    if series.empty or series.sum() <= 0:
-        st.caption("No data yet.")
-        return
-    data = series.reset_index()
-    data.columns = ["Category", "Amount"]
     chart = (
-        alt.Chart(data)
-        .mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3, color=color)
+        alt.Chart(df)
+        .mark_arc()
         .encode(
-            x=alt.X("Category:N", sort="-y", title=None, axis=CATEGORY_AXIS),
-            y=alt.Y("Amount:Q", title=None, axis=MONEY_AXIS),
-            tooltip=[alt.Tooltip("Category:N"), alt.Tooltip("Amount:Q", format="$,.2f")],
+            theta=alt.Theta("Amount:Q", stack=True),
+            color=alt.Color("Category:N", scale=alt.Scale(domain=domain, range=range_), legend=alt.Legend(title=None, orient="right")),
+            tooltip=[alt.Tooltip("Category:N"), alt.Tooltip("Amount:Q", format="$,.2f"), alt.Tooltip("Pct:Q", title="Share", format=".1%")],
         )
         .properties(height=height)
     )

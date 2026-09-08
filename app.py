@@ -349,13 +349,13 @@ elif page == "Breakdown":
 
     st.divider()
     st.subheader("Spending by Category")
-    st.caption("Excludes Savings contributions. Colored by group — Needs (blue) / Wants (orange).")
+    st.caption("Excludes Savings contributions. Categories under 5% of the total are grouped into \"Other\".")
     expense_df = scope_df[(scope_df["type"] == "expense") & (scope_df["category"].map(groups) != "Savings")]
     if expense_df.empty:
         st.info("No expenses this period.")
     else:
         by_cat = expense_df.groupby("category")["amount"].sum().sort_values(ascending=False)
-        charts.category_bar_by_group(by_cat, groups, db.GROUP_COLORS)
+        charts.category_pie(by_cat, db.GOAL_PALETTE)
 
     st.divider()
     st.subheader("Income by Category")
@@ -364,7 +364,7 @@ elif page == "Breakdown":
         st.info("No income this period.")
     else:
         by_cat_income = income_df.groupby("category")["amount"].sum().sort_values(ascending=False)
-        charts.category_bar_flat(by_cat_income, TREND_COLORS["Income"])
+        charts.category_pie(by_cat_income, db.GOAL_PALETTE, group_small=False)
 
     st.divider()
     st.subheader(f"Transactions — {period_label}")
