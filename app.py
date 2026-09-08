@@ -59,6 +59,12 @@ st.markdown(
     div[class*="st-key-tablewrap_"] {
         overflow-x: auto !important;
     }
+    /* Vega chart tooltips render a field's raw text, and HTML collapses literal "\n" characters
+       by default -- this is what makes the multi-line "<Group> - Other" breakdown tooltip (on
+       the Spending by Category pie) actually show one item per line instead of running together. */
+    #vg-tooltip-element .value {
+        white-space: pre-line;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -349,13 +355,17 @@ elif page == "Breakdown":
 
     st.divider()
     st.subheader("Spending by Category")
-    st.caption("Excludes Savings contributions. The smallest categories are grouped into an \"Other\" slice under 5% of the total.")
+    st.caption(
+        "Excludes Savings contributions. Categories are colored by group (Transportation, Bills, "
+        "etc.); within a group, the smallest are grouped into a \"<Group> - Other\" slice under "
+        "5% of the total -- hover it for a breakdown."
+    )
     expense_df = scope_df[(scope_df["type"] == "expense") & (scope_df["category"].map(groups) != "Savings")]
     if expense_df.empty:
         st.info("No expenses this period.")
     else:
         by_cat = expense_df.groupby("category")["amount"].sum().sort_values(ascending=False)
-        charts.category_pie(by_cat, db.GOAL_PALETTE)
+        charts.spending_category_pie(by_cat, db.SPENDING_CHART_GROUPS, db.SPENDING_GROUP_SHADES, db.SPENDING_GROUP_OTHER_COLOR)
 
     st.divider()
     st.subheader("Income by Category")

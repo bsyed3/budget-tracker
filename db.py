@@ -35,6 +35,65 @@ def goal_colors(goal_names: list[str]) -> dict[str, str]:
     return {name: GOAL_PALETTE[i % len(GOAL_PALETTE)] for i, name in enumerate(goal_names)}
 
 
+# Meta-groups for the Spending by Category pie chart (a different, purely visual grouping from
+# the Needs/Wants/Savings one) -- every category in a group shares a color family (shades of the
+# same hue), and a category's shade is fixed by its position in this list, not by amount or rank,
+# so e.g. Gas is always the same color regardless of what else is in the chart that period.
+SPENDING_CHART_GROUPS: dict[str, list[str]] = {
+    "Transportation": ["Car", "Insurance", "Presto", "Uber", "Gas"],
+    "Bills": ["Cell Phone", "Internet", "Loans"],
+    "Social": ["Activities", "Dates"],
+    "Personal": ["Personal Care", "Personal Shopping", "Gym/Fitness", "Subscriptions"],
+    "Giving": ["Gifts", "Donations"],
+    "Food": ["Eating Out", "Groceries", "Tims/Coffee"],
+    "Travel": ["Travel"],
+    "Miscellaneous": ["Miscellaneous"],
+}
+
+# One shade per category, in the same order as SPENDING_CHART_GROUPS[group], dark -> light.
+SPENDING_GROUP_SHADES: dict[str, list[str]] = {
+    "Transportation": ["#78350f", "#b45309", "#d97706", "#f59e0b", "#fbbf24"],
+    "Bills": ["#1e3a8a", "#1d4ed8", "#3b82f6"],
+    "Social": ["#581c87", "#c084fc"],
+    "Personal": ["#831843", "#db2777", "#ec4899", "#f9a8d4"],
+    "Giving": ["#134e4a", "#2dd4bf"],
+    "Food": ["#14532d", "#16a34a", "#4ade80"],
+    "Travel": ["#ea580c"],
+    "Miscellaneous": ["#64748b"],
+}
+
+# A distinct, pale/muted shade per group, reserved for that group's own "<Group> - Other" slice
+# (the small leftover categories within that group, same 5%-of-total logic as the plain pie).
+SPENDING_GROUP_OTHER_COLOR: dict[str, str] = {
+    "Transportation": "#fde68a",
+    "Bills": "#93c5fd",
+    "Social": "#e9d5ff",
+    "Personal": "#fbcfe8",
+    "Giving": "#99f6e4",
+    "Food": "#bbf7d0",
+    "Travel": "#fdba74",
+    "Miscellaneous": "#cbd5e1",
+}
+
+
+def spending_chart_group_for(category: str) -> str:
+    """Which meta-group a spending category belongs to -- unrecognized categories (e.g. one
+    added after this list was written) fall back to Miscellaneous rather than erroring."""
+    for group, cats in SPENDING_CHART_GROUPS.items():
+        if category in cats:
+            return group
+    return "Miscellaneous"
+
+
+def spending_category_color(category: str) -> str:
+    """A stable color for a spending category, independent of amount or rank."""
+    group = spending_chart_group_for(category)
+    cats = SPENDING_CHART_GROUPS.get(group, [])
+    shades = SPENDING_GROUP_SHADES.get(group) or SPENDING_GROUP_SHADES["Miscellaneous"]
+    idx = cats.index(category) if category in cats else 0
+    return shades[idx] if idx < len(shades) else shades[0]
+
+
 # Seed data used only the first time the database is created (or to backfill any
 # category found in old transaction data that isn't in the categories table yet).
 _SEED_EXPENSE_GROUPS = {

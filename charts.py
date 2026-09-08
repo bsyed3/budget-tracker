@@ -65,6 +65,78 @@ def category_pie(series: pd.Series, palette: list[str], group_small: bool = True
     st.altair_chart(chart, use_container_width=True)
 
 
+def spending_category_pie(
+    series: pd.Series, groups: dict[str, list[str]], shades: dict[str, list[str]],
+    other_colors: dict[str, str], height: int = 420,
+) -> None:
+    """Spending by category, colored in per-meta-group families (e.g. every Transportation
+    category gets its own shade of amber) so a category's color never depends on amount or rank
+    -- Gas is always the same color whether or not it happens to be the biggest slice this month.
+
+    Within each meta-group that has more than 3 categories present, the same 5%-of-total
+    cumulative-tail logic as category_pie() folds that group's smallest categories into a single
+    "<Group> - Other" slice (hovering it lists exactly what's inside, with each one's own amount
+    and share) instead of splintering the chart with one slice per tiny category.
+    """
+    if series.empty or series.sum() <= 0:
+        st.caption("No data yet.")
+        return
+    total = series.sum()
+    rows = []
+
+    for group, cats_in_group in groups.items():
+        present = series[series.index.isin(cats_in_group)]
+        present = present[present > 0].sort_values(ascending=False)
+        if present.empty:
+            continue
+
+        cutoff = len(present)
+        if len(present) > 3:
+            group_total = present.sum()
+            cumulative = 0.0
+            for i, amount in enumerate(present):
+                cumulative += amount
+                if group_total - cumulative < _OTHER_THRESHOLD * total:
+                    cutoff = i + 1
+                    break
+
+        for cat, amount in present.iloc[:cutoff].items():
+            pct = amount / total
+            rows.append({
+                "Category": cat, "Amount": amount,
+                "Color": shades.get(group, [_OTHER_COLOR])[cats_in_group.index(cat) % len(shades.get(group, [_OTHER_COLOR]))],
+                "Detail": f"{cat}\n${amount:,.2f} ({pct:.1%})",
+            })
+
+        leftover = present.iloc[cutoff:]
+        if not leftover.empty:
+            other_amount = leftover.sum()
+            other_pct = other_amount / total
+            detail_lines = [f"{group} - Other", f"${other_amount:,.2f} ({other_pct:.1%})", ""]
+            detail_lines += [f"{cat} - ${amt:,.2f} ({amt / total:.0%})" for cat, amt in leftover.items()]
+            rows.append({
+                "Category": f"{group} - Other", "Amount": other_amount,
+                "Color": other_colors.get(group, _OTHER_COLOR),
+                "Detail": "\n".join(detail_lines),
+            })
+
+    df = pd.DataFrame(rows)
+    domain = df["Category"].tolist()
+    range_ = df["Color"].tolist()
+
+    chart = (
+        alt.Chart(df)
+        .mark_arc()
+        .encode(
+            theta=alt.Theta("Amount:Q", stack=True),
+            color=alt.Color("Category:N", scale=alt.Scale(domain=domain, range=range_), legend=alt.Legend(title=None, orient="right", columns=1)),
+            tooltip=[alt.Tooltip("Detail:N", title=None)],
+        )
+        .properties(height=height)
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+
 def compare_bar(compare_df: pd.DataFrame, colors: dict[str, str], height: int = 300) -> None:
     """Side-by-side (not stacked) grouped bars. compare_df: index=Category, columns=series names."""
     if compare_df.empty:
