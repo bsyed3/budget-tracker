@@ -23,8 +23,11 @@ _OTHER_THRESHOLD = 0.05  # a category under 5% of the total gets folded into "Ot
 def category_pie(series: pd.Series, palette: list[str], group_small: bool = True, height: int = 320) -> None:
     """One slice per category, colored from a flat qualitative palette (no Needs/Wants coloring).
 
-    If there are more than 3 categories, any individually under 5% of the total are combined
-    into a single "Other" slice -- pass group_small=False to disable this and always show every
+    If there are more than 3 categories, the largest ones are kept individually for as long as
+    what's left over is still at least 5% of the total; once the remaining tail drops under 5%,
+    that whole tail is folded into a single "Other" slice -- so "Other" itself never exceeds 5%
+    (rather than every category individually under 5% landing in it, which could make "Other"
+    itself the largest slice). Pass group_small=False to disable this and always show every
     category (e.g. for income, which usually has too few categories for "Other" to make sense).
     """
     if series.empty or series.sum() <= 0:
@@ -32,10 +35,16 @@ def category_pie(series: pd.Series, palette: list[str], group_small: bool = True
         return
     data = series.sort_values(ascending=False)
     if group_small and len(data) > 3:
-        shares = data / data.sum()
-        small = data[shares < _OTHER_THRESHOLD]
-        if not small.empty:
-            data = pd.concat([data[shares >= _OTHER_THRESHOLD], pd.Series({"Other": small.sum()})])
+        total = data.sum()
+        cumulative = 0.0
+        cutoff = len(data)
+        for i, amount in enumerate(data):
+            cumulative += amount
+            if total - cumulative < _OTHER_THRESHOLD * total:
+                cutoff = i + 1
+                break
+        if cutoff < len(data):
+            data = pd.concat([data.iloc[:cutoff], pd.Series({"Other": data.iloc[cutoff:].sum()})])
 
     df = data.reset_index()
     df.columns = ["Category", "Amount"]

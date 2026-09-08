@@ -349,7 +349,7 @@ elif page == "Breakdown":
 
     st.divider()
     st.subheader("Spending by Category")
-    st.caption("Excludes Savings contributions. Categories under 5% of the total are grouped into \"Other\".")
+    st.caption("Excludes Savings contributions. The smallest categories are grouped into an \"Other\" slice under 5% of the total.")
     expense_df = scope_df[(scope_df["type"] == "expense") & (scope_df["category"].map(groups) != "Savings")]
     if expense_df.empty:
         st.info("No expenses this period.")
