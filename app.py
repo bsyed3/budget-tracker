@@ -62,9 +62,16 @@ st.markdown(
     }
     /* Vega chart tooltips render a field's raw text, and HTML collapses literal "\n" characters
        by default -- this is what makes the multi-line "<Group> - Other" breakdown tooltip (on
-       the Spending by Category pie) actually show one item per line instead of running together. */
+       the Spending by Category pie) actually show one item per line instead of running together.
+       Streamlit's own tooltip CSS also caps .value at 5 lines via -webkit-line-clamp (fine for a
+       short single-field tooltip, but it silently cuts off a longer per-category breakdown, e.g.
+       Transportation's 5 categories plus its 3-line header run to 8 lines) -- overriding it back
+       to a plain block lets the tooltip grow to fit however many lines it actually has. */
     #vg-tooltip-element .value {
         white-space: pre-line;
+        display: block !important;
+        -webkit-line-clamp: unset !important;
+        overflow: visible !important;
     }
     </style>
     """,
