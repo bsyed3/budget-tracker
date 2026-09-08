@@ -76,13 +76,21 @@ def spending_category_pie(
     Within each meta-group that has more than 3 categories present, the same 5%-of-total
     cumulative-tail logic as category_pie() folds that group's smallest categories into a single
     "<Group> - Other" slice (hovering it lists exactly what's inside, with each one's own amount
-    and share) instead of splintering the chart with one slice per tiny category.
+    and share) instead of splintering the chart with one slice per tiny category. If only one
+    category would end up in "Other", there's nothing to lump it in with -- it's shown under its
+    own name and color instead of a pointless one-item "Other".
     """
     if series.empty or series.sum() <= 0:
         st.caption("No data yet.")
         return
     total = series.sum()
     rows = []
+
+    def own_color(group: str, cat: str) -> str:
+        group_shades = shades.get(group) or [_OTHER_COLOR]
+        cats_in_group = groups.get(group, [])
+        idx = cats_in_group.index(cat) if cat in cats_in_group else 0
+        return group_shades[idx % len(group_shades)]
 
     for group, cats_in_group in groups.items():
         present = series[series.index.isin(cats_in_group)]
@@ -100,11 +108,15 @@ def spending_category_pie(
                     cutoff = i + 1
                     break
 
+        # A single leftover category isn't grouped with anything -- show it plainly instead of
+        # a one-item "<Group> - Other".
+        if len(present) - cutoff == 1:
+            cutoff = len(present)
+
         for cat, amount in present.iloc[:cutoff].items():
             pct = amount / total
             rows.append({
-                "Category": cat, "Amount": amount,
-                "Color": shades.get(group, [_OTHER_COLOR])[cats_in_group.index(cat) % len(shades.get(group, [_OTHER_COLOR]))],
+                "Category": cat, "Amount": amount, "Color": own_color(group, cat),
                 "Detail": f"{cat}\n${amount:,.2f} ({pct:.1%})",
             })
 
