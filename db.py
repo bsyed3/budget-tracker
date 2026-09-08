@@ -92,6 +92,7 @@ SPENDING_GROUP_OTHER_COLOR: dict[str, str] = {
 # from each SPENDING_GROUP_SHADES family reads as muted/dark once it's the only color in its
 # slice rather than the top of a dark-to-light gradient, so this view uses its own brighter set
 # instead (same hue identity per group as the shade families above, e.g. Food still green).
+# Miscellaneous stays its usual neutral gray rather than picking up a bright hue of its own.
 SPENDING_GROUP_COLOR: dict[str, str] = {
     "Transportation": "#f59e0b",
     "Bills": "#2563eb",
@@ -100,7 +101,7 @@ SPENDING_GROUP_COLOR: dict[str, str] = {
     "Giving": "#dc2626",
     "Food": "#16a34a",
     "Travel": "#0891b2",
-    "Miscellaneous": "#ca8a04",
+    "Miscellaneous": "#64748b",
 }
 
 
