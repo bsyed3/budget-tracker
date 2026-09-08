@@ -42,10 +42,10 @@ def goal_colors(goal_names: list[str]) -> dict[str, str]:
 SPENDING_CHART_GROUPS: dict[str, list[str]] = {
     "Transportation": ["Car", "Insurance", "Presto", "Uber", "Gas"],
     "Bills": ["Cell Phone", "Internet", "Loans"],
+    "Food": ["Eating Out", "Groceries", "Tims/Coffee"],
     "Social": ["Activities", "Dates"],
     "Personal": ["Personal Care", "Personal Shopping", "Gym/Fitness", "Subscriptions"],
     "Giving": ["Gifts", "Donations"],
-    "Food": ["Eating Out", "Groceries", "Tims/Coffee"],
     "Travel": ["Travel"],
     "Miscellaneous": ["Miscellaneous"],
 }
@@ -65,10 +65,10 @@ CATEGORY_TYPES = list(SPENDING_CHART_GROUPS.keys())
 SPENDING_GROUP_SHADES: dict[str, list[str]] = {
     "Transportation": ["#78350f", "#b45309", "#d97706", "#f59e0b", "#fbbf24"],
     "Bills": ["#1e3a8a", "#1d4ed8", "#3b82f6"],
+    "Food": ["#14532d", "#16a34a", "#4ade80"],
     "Social": ["#581c87", "#c084fc"],
     "Personal": ["#831843", "#db2777", "#ec4899", "#f9a8d4"],
     "Giving": ["#7f1d1d", "#f87171"],
-    "Food": ["#14532d", "#16a34a", "#4ade80"],
     "Travel": ["#0e7490"],
     "Miscellaneous": ["#64748b"],
 }
@@ -78,10 +78,10 @@ SPENDING_GROUP_SHADES: dict[str, list[str]] = {
 SPENDING_GROUP_OTHER_COLOR: dict[str, str] = {
     "Transportation": "#fde68a",
     "Bills": "#93c5fd",
+    "Food": "#bbf7d0",
     "Social": "#e9d5ff",
     "Personal": "#fbcfe8",
     "Giving": "#fecaca",
-    "Food": "#bbf7d0",
     "Travel": "#a5f3fc",
     "Miscellaneous": "#cbd5e1",
 }
@@ -96,10 +96,10 @@ SPENDING_GROUP_OTHER_COLOR: dict[str, str] = {
 SPENDING_GROUP_COLOR: dict[str, str] = {
     "Transportation": "#f59e0b",
     "Bills": "#2563eb",
+    "Food": "#16a34a",
     "Social": "#9333ea",
     "Personal": "#db2777",
     "Giving": "#dc2626",
-    "Food": "#16a34a",
     "Travel": "#0891b2",
     "Miscellaneous": "#64748b",
 }
