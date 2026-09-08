@@ -88,9 +88,20 @@ SPENDING_GROUP_OTHER_COLOR: dict[str, str] = {
 
 # One flat color per Category Type -- used by the aggregated "one slice per type" view of the
 # Spending by Category chart (as opposed to the per-category-with-shade-families view above).
-# Derived from the same shade families so a group's color identity matches across both views:
-# its darkest shade is also its single aggregated-slice color.
-SPENDING_GROUP_COLOR: dict[str, str] = {group: shades[0] for group, shades in SPENDING_GROUP_SHADES.items()}
+# Pulled from GOAL_PALETTE's brighter, more saturated qualitative colors -- the darkest shade
+# from each SPENDING_GROUP_SHADES family reads as muted/dark once it's the only color in its
+# slice rather than the top of a dark-to-light gradient, so this view uses its own brighter set
+# instead (same hue identity per group as the shade families above, e.g. Food still green).
+SPENDING_GROUP_COLOR: dict[str, str] = {
+    "Transportation": "#f59e0b",
+    "Bills": "#2563eb",
+    "Social": "#9333ea",
+    "Personal": "#db2777",
+    "Giving": "#dc2626",
+    "Food": "#16a34a",
+    "Travel": "#0891b2",
+    "Miscellaneous": "#ca8a04",
+}
 
 
 def spending_chart_group_for(category: str) -> str:
