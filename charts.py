@@ -184,9 +184,9 @@ def spending_type_pie(
     fixed color regardless of amount/rank; hovering a slice lists the individual categories
     inside it, each with its own amount and share.
 
-    The same 5%-of-total cumulative-tail logic as category_pie() folds the smallest Category
-    Types into a single "Other" slice once more than 3 types are present and the running tail
-    drops under 5% of the total -- hovering it lists which types (and their totals) are inside.
+    Unlike spending_category_pie() and category_pie(), there's no "Other" folding here -- with
+    only a handful of Category Types total, every one present gets its own slice no matter how
+    small its share.
     """
     if series.empty or series.sum() <= 0:
         st.caption("No data yet.")
@@ -201,38 +201,14 @@ def spending_type_pie(
             type_totals.append((group, present))
     type_totals.sort(key=lambda t: t[1].sum(), reverse=True)
 
-    cutoff = len(type_totals)
-    if len(type_totals) > 3:
-        cumulative = 0.0
-        for i, (_, present) in enumerate(type_totals):
-            cumulative += present.sum()
-            if total - cumulative < _OTHER_THRESHOLD * total:
-                cutoff = i + 1
-                break
-    # A single leftover type isn't grouped with anything -- show it plainly instead of a
-    # one-item "Other".
-    if len(type_totals) - cutoff == 1:
-        cutoff = len(type_totals)
-
     rows = []
-    for group, present in type_totals[:cutoff]:
+    for group, present in type_totals:
         amount = present.sum()
         pct = amount / total
         detail_lines = [group, f"${amount:,.2f} ({pct:.1%})", ""]
         detail_lines += [f"{cat} - ${amt:,.2f} ({amt / total:.0%})" for cat, amt in present.items()]
         rows.append({
             "Category": group, "Amount": amount, "Color": colors.get(group, _OTHER_COLOR),
-            "Detail": "\n".join(detail_lines),
-        })
-
-    leftover = type_totals[cutoff:]
-    if leftover:
-        other_amount = sum(present.sum() for _, present in leftover)
-        other_pct = other_amount / total
-        detail_lines = ["Other", f"${other_amount:,.2f} ({other_pct:.1%})", ""]
-        detail_lines += [f"{group} - ${present.sum():,.2f} ({present.sum() / total:.0%})" for group, present in leftover]
-        rows.append({
-            "Category": "Other", "Amount": other_amount, "Color": _OTHER_COLOR,
             "Detail": "\n".join(detail_lines),
         })
 

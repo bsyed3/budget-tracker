@@ -1,0 +1,5 @@
+[server]
+# Serves files under ./static/ at <app-url>/app/static/<filename> -- needed so the app icon
+# (browser favicon, iOS "Add to Home Screen" icon) can be a real fetchable URL instead of a
+# data: URI. iOS Safari in particular doesn't reliably honor a data: URI for apple-touch-icon.
+enableStaticServing = true
