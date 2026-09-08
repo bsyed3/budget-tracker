@@ -79,12 +79,18 @@ def spending_category_pie(
     and share) instead of splintering the chart with one slice per tiny category. If only one
     category would end up in "Other", there's nothing to lump it in with -- it's shown under its
     own name and color instead of a pointless one-item "Other".
+
+    The legend groups by meta-group too, not by category: one row per group, showing its full
+    shade family as a single swatch strip plus that group's own total $ and share of the period
+    (Vega-Lite's built-in legend can't group multiple color values into one row, so this renders
+    a custom one below the chart instead).
     """
     if series.empty or series.sum() <= 0:
         st.caption("No data yet.")
         return
     total = series.sum()
     rows = []
+    group_totals: dict[str, float] = {}
 
     def own_color(group: str, cat: str) -> str:
         group_shades = shades.get(group) or [_OTHER_COLOR]
@@ -97,6 +103,7 @@ def spending_category_pie(
         present = present[present > 0].sort_values(ascending=False)
         if present.empty:
             continue
+        group_totals[group] = present.sum()
 
         cutoff = len(present)
         if len(present) > 3:
@@ -141,12 +148,31 @@ def spending_category_pie(
         .mark_arc()
         .encode(
             theta=alt.Theta("Amount:Q", stack=True),
-            color=alt.Color("Category:N", scale=alt.Scale(domain=domain, range=range_), legend=alt.Legend(title=None, orient="right", columns=1)),
+            color=alt.Color("Category:N", scale=alt.Scale(domain=domain, range=range_), legend=None),
             tooltip=[alt.Tooltip("Detail:N", title=None)],
         )
         .properties(height=height)
     )
     st.altair_chart(chart, use_container_width=True)
+
+    # Vega-Lite's legend shows one swatch per distinct color value, which would mean one row per
+    # category (defeating the point of grouping them into families) -- legend=None above turns
+    # that off, and this renders a custom one instead: one row per meta-group, its full shade
+    # family as a single swatch strip, plus that group's own total and share of the period.
+    legend_html = ""
+    for group in groups:
+        if group not in group_totals:
+            continue
+        amount = group_totals[group]
+        pct = amount / total
+        swatch = "".join(f'<div style="flex:1;background:{c};"></div>' for c in shades.get(group, [_OTHER_COLOR]))
+        legend_html += (
+            '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">'
+            f'<div style="display:flex;width:70px;height:20px;border-radius:4px;overflow:hidden;flex-shrink:0;">{swatch}</div>'
+            f'<div style="font-size:13px;">{group} — ${amount:,.2f} ({pct:.0%})</div>'
+            '</div>'
+        )
+    st.markdown(legend_html, unsafe_allow_html=True)
 
 
 def compare_bar(compare_df: pd.DataFrame, colors: dict[str, str], height: int = 300) -> None:
