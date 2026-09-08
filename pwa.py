@@ -96,3 +96,63 @@ _NUMBER_INPUT_UX = """
 def inject_number_input_ux() -> None:
     """Call once per page render. Auto-selects a number input's value on focus."""
     components.html(_NUMBER_INPUT_UX, height=0, width=0)
+
+
+_TOOLTIP_CLAMP = """
+<script>
+(function() {
+    var doc = window.parent.document;
+    if (doc._tooltipClampBound) return;
+    doc._tooltipClampBound = true;
+    var win = window.parent;
+    var MARGIN = 8;
+
+    // Vega-Lite/vega-tooltip positions its hover tooltip a fixed offset from the cursor with no
+    // viewport-boundary check. A tall multi-line tooltip (e.g. the Spending by Category Type
+    // pie's per-category breakdown) hovered near the bottom of the window runs off the bottom
+    // edge -- and since the tooltip is position: fixed, that part is simply unreachable (there's
+    // no scrolling a fixed element into view). This nudges it back on-screen, vertically and
+    // horizontally, every time vega-tooltip repositions it, so all of its content stays visible
+    // no matter where on the page you're hovering.
+    function clamp(el) {
+        var rect = el.getBoundingClientRect();
+        var top = rect.top;
+        var left = rect.left;
+        if (rect.bottom > win.innerHeight - MARGIN) {
+            top = Math.max(MARGIN, win.innerHeight - MARGIN - rect.height);
+        }
+        if (rect.right > win.innerWidth - MARGIN) {
+            left = Math.max(MARGIN, win.innerWidth - MARGIN - rect.width);
+        }
+        if (top !== rect.top) el.style.top = top + "px";
+        if (left !== rect.left) el.style.left = left + "px";
+    }
+
+    function watch(el) {
+        var observer = new MutationObserver(function() { clamp(el); });
+        observer.observe(el, { attributes: true, attributeFilter: ["style"] });
+    }
+
+    // The tooltip element is created lazily by vega-tooltip on first hover anywhere on the
+    // page, so watch for it to show up rather than assuming it already exists.
+    var existing = doc.getElementById("vg-tooltip-element");
+    if (existing) {
+        watch(existing);
+    } else {
+        var bodyObserver = new MutationObserver(function() {
+            var el = doc.getElementById("vg-tooltip-element");
+            if (el) {
+                watch(el);
+                bodyObserver.disconnect();
+            }
+        });
+        bodyObserver.observe(doc.body, { childList: true, subtree: true });
+    }
+})();
+</script>
+"""
+
+
+def inject_tooltip_clamp() -> None:
+    """Call once per page render. Keeps Vega-Lite hover tooltips fully on-screen."""
+    components.html(_TOOLTIP_CLAMP, height=0, width=0)

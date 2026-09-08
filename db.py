@@ -59,17 +59,15 @@ CATEGORY_TYPES = list(SPENDING_CHART_GROUPS.keys())
 
 # One shade per category, in the same order as SPENDING_CHART_GROUPS[group], dark -> light.
 # Each group gets its own hue family so a category's color always identifies its group at a
-# glance; Giving is true red rather than the teal it used to be, since teal read as too close to
-# Food's green to tell the two groups apart on sight. Travel is cyan (rather than its old orange,
-# which sat too close to Transportation's amber family) -- conveniently the hue Giving vacated.
+# glance. Giving is cyan and Travel is red.
 SPENDING_GROUP_SHADES: dict[str, list[str]] = {
     "Transportation": ["#78350f", "#b45309", "#d97706", "#f59e0b", "#fbbf24"],
     "Bills": ["#1e3a8a", "#1d4ed8", "#3b82f6"],
     "Food": ["#14532d", "#16a34a", "#4ade80"],
     "Social": ["#581c87", "#c084fc"],
     "Personal": ["#831843", "#db2777", "#ec4899", "#f9a8d4"],
-    "Giving": ["#7f1d1d", "#f87171"],
-    "Travel": ["#0e7490"],
+    "Giving": ["#164e63", "#67e8f9"],
+    "Travel": ["#b91c1c"],
     "Miscellaneous": ["#64748b"],
 }
 
@@ -81,8 +79,8 @@ SPENDING_GROUP_OTHER_COLOR: dict[str, str] = {
     "Food": "#bbf7d0",
     "Social": "#e9d5ff",
     "Personal": "#fbcfe8",
-    "Giving": "#fecaca",
-    "Travel": "#a5f3fc",
+    "Giving": "#a5f3fc",
+    "Travel": "#fecaca",
     "Miscellaneous": "#cbd5e1",
 }
 
@@ -99,8 +97,8 @@ SPENDING_GROUP_COLOR: dict[str, str] = {
     "Food": "#16a34a",
     "Social": "#9333ea",
     "Personal": "#db2777",
-    "Giving": "#dc2626",
-    "Travel": "#0891b2",
+    "Giving": "#0891b2",
+    "Travel": "#dc2626",
     "Miscellaneous": "#64748b",
 }
 

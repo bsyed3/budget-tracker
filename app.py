@@ -17,6 +17,7 @@ st.set_page_config(page_title="Budget Tracker", page_icon="static/icon.png", lay
 db.init_db()
 pwa.inject()  # iOS "Add to Home Screen" -> full-screen app icon/name instead of a Safari tab
 pwa.inject_number_input_ux()  # tapping a number field selects its value instead of appending
+pwa.inject_tooltip_clamp()  # keeps hover tooltips (e.g. the pie charts') fully on-screen
 
 # Auto-generate any recurring transactions that have come due (checked on every load; cheap
 # and idempotent — backfills every missed occurrence, not just one, if it's been a while).
