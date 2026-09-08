@@ -186,7 +186,9 @@ def spending_type_pie(
 
     Unlike spending_category_pie() and category_pie(), there's no "Other" folding here -- with
     only a handful of Category Types total, every one present gets its own slice no matter how
-    small its share.
+    small its share. Slices keep `groups`' own fixed order (Transportation, Bills, Social, etc.)
+    rather than being sorted by amount, so a given type is always in the same position on the
+    wheel from one period to the next.
     """
     if series.empty or series.sum() <= 0:
         st.caption("No data yet.")
@@ -199,7 +201,6 @@ def spending_type_pie(
         present = present[present > 0].sort_values(ascending=False)
         if not present.empty:
             type_totals.append((group, present))
-    type_totals.sort(key=lambda t: t[1].sum(), reverse=True)
 
     rows = []
     for group, present in type_totals:
