@@ -412,6 +412,31 @@ def init_db() -> None:
                 )
             conn.execute("DROP TABLE transactions")
             conn.execute("ALTER TABLE transactions_new RENAME TO transactions")
+
+        # A rule's occurrence for a given date must be unique -- generate_due_transactions()
+        # checks recurring_occurrence_exists() before inserting, but that check-then-insert isn't
+        # atomic, so two near-simultaneous app loads (e.g. two browser tabs or devices open at
+        # once) can both pass the check before either has committed, creating the same occurrence
+        # twice. One-time cleanup first: collapse any duplicate occurrence already created that
+        # way down to its earliest (lowest-id) row, since the index below can't be created while
+        # duplicates exist. Then the partial index (only over rows that actually have a
+        # recurring_id -- manual transactions all have NULL there and SQLite treats every NULL as
+        # distinct, so they never collide) makes the database itself reject the second insert from
+        # here on; add_recurring_occurrence() below is what catches that and turns it into a
+        # no-op instead of a crash.
+        conn.execute(
+            """
+            DELETE FROM transactions
+            WHERE recurring_id IS NOT NULL
+              AND id NOT IN (
+                  SELECT MIN(id) FROM transactions WHERE recurring_id IS NOT NULL GROUP BY recurring_id, date
+              )
+            """
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_recurring_occurrence "
+            "ON transactions(recurring_id, date) WHERE recurring_id IS NOT NULL"
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS categories (
@@ -690,15 +715,48 @@ def get_recurring_rules() -> list:
 
 
 def recurring_occurrence_exists(recurring_id: int, date: str) -> bool:
-    """Whether a rule has already generated a transaction for this exact date -- guards against
-    creating the same occurrence twice if generate_due_transactions() ever runs more than once
-    before a rule's next_due_date is durably advanced (e.g. two tabs/devices open at once, or a
-    reload right after a network hiccup)."""
+    """Whether a rule has already generated a transaction for this exact date -- a fast-path
+    check so generate_due_transactions() doesn't attempt (and fail) an insert in the common case.
+    Not a real guard by itself: this check and the eventual insert aren't atomic, so two
+    near-simultaneous calls (e.g. two tabs/devices open at once) can both see False here before
+    either has committed. add_recurring_occurrence()'s unique index is the actual guard."""
     with get_conn() as conn:
         row = conn.execute(
             "SELECT 1 FROM transactions WHERE recurring_id = ? AND date = ? LIMIT 1", (recurring_id, date)
         ).fetchone()
     return row is not None
+
+
+def add_recurring_occurrence(
+    date: str, type_: str, category: str, description: str, amount: float,
+    goal_id: int | None, recurring_id: int,
+) -> bool:
+    """Insert one recurring rule's occurrence. Returns False instead of raising if this
+    (recurring_id, date) pair already exists -- caught via the partial unique index added in
+    init_db(), which is what actually prevents a duplicate when two near-simultaneous calls both
+    pass recurring_occurrence_exists() before either has committed (that check alone is not a
+    real guard against that race, only this constraint is).
+
+    Doesn't pattern-match the exception's error text to detect the constraint violation: over
+    Turso, a genuine constraint violation is a statement-level error that still comes back as
+    HTTP 200 (only a transport-level failure gets a non-200 status), and libsql_client's HTTP
+    client doesn't handle that case -- it surfaces as a bare KeyError with no SQL error message
+    at all, rather than a real exception. Re-checking whether the row exists after ANY exception
+    works regardless of what the driver raises or says, and still re-raises a genuinely unrelated
+    failure (a network error, say), since then the row won't exist either.
+    """
+    with get_conn() as conn:
+        try:
+            conn.execute(
+                "INSERT INTO transactions (date, type, category, description, amount, goal_id, recurring_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (date, type_, category, description, amount, goal_id, recurring_id),
+            )
+        except Exception:
+            if recurring_occurrence_exists(recurring_id, date):
+                return False
+            raise
+    return True
 
 
 # ----------------------------------------------------------------- savings goals
