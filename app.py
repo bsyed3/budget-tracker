@@ -614,7 +614,7 @@ elif page == "Savings":
             "already made won't be subtracted from it, only ones made from today onward will."
         )
         new_value = st.number_input(
-            "TFSA room remaining", min_value=0.0, step=50.0, value=float(tfsa_remaining), format="%.2f"
+            "TFSA room remaining", min_value=0.0, step=50.0, value=max(0.0, float(tfsa_remaining)), format="%.2f"
         )
         goal_names_all = [g["name"] for g in goals]
         default_linked = [g["name"] for g in goals if g["id"] in tfsa_linked_ids]
