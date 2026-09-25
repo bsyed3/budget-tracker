@@ -873,3 +873,15 @@ def set_tfsa_room(value: float, anchor_date: str, linked_goal_ids: list[int]) ->
     set_setting("tfsa_room_value", str(value))
     set_setting("tfsa_room_anchor_date", anchor_date)
     set_setting("tfsa_linked_goal_ids", ",".join(str(i) for i in linked_goal_ids))
+    # Transactions only carry a date, so "made after this point" can't be told apart from
+    # "already logged earlier today" by date alone -- remember the newest transaction id at reset
+    # time instead, and only count ones with a higher id.
+    with get_conn() as conn:
+        row = conn.execute("SELECT COALESCE(MAX(id), 0) AS m FROM transactions").fetchone()
+    set_setting("tfsa_anchor_txn_id", str(row["m"]))
+
+
+def get_tfsa_anchor_txn_id() -> int | None:
+    """Newest transaction id when the room was last set, or None if it predates this tracking."""
+    raw = get_setting("tfsa_anchor_txn_id", "")
+    return int(raw) if raw.strip() else None

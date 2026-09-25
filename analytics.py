@@ -199,17 +199,27 @@ def savings_change_since_month_start(goal_row, df: pd.DataFrame) -> tuple[float,
     return dollar_change, pct_change
 
 
-def tfsa_room_remaining(df: pd.DataFrame, anchor_value: float, anchor_date: str, linked_goal_ids: list[int]) -> float:
+def tfsa_room_remaining(
+    df: pd.DataFrame, anchor_value: float, anchor_date: str, linked_goal_ids: list[int],
+    anchor_txn_id: int | None = None,
+) -> float:
     """Anchor value minus contributions (expense transactions linked to one of the given goals)
     dated on or after the anchor date -- setting a new anchor resets the clock to today, so
     anything logged before today no longer counts against it, while today's (and any later)
     contributions do. Transactions only carry a date, not a timestamp, so "on the anchor date"
     counts as "since the reset" rather than being excluded -- otherwise a contribution added
-    later the same day the anchor was reset would never count until the next calendar day."""
+    later the same day the anchor was reset would never count until the next calendar day.
+
+    When anchor_txn_id is known (the newest transaction id at reset time) it's used instead of
+    the date: only transactions created after the reset count, so contributions already logged
+    earlier the same day (e.g. recurring transfers) don't immediately push the room negative."""
     if df.empty or not linked_goal_ids:
         return anchor_value
-    anchor = pd.Timestamp(anchor_date)
-    mask = df["goal_id"].isin(linked_goal_ids) & (df["type"] == "expense") & (df["date"] >= anchor)
+    if anchor_txn_id is not None:
+        since = df["id"] > anchor_txn_id
+    else:
+        since = df["date"] >= pd.Timestamp(anchor_date)
+    mask = df["goal_id"].isin(linked_goal_ids) & (df["type"] == "expense") & since
     contributed_since = df.loc[mask, "amount"].sum()
     return anchor_value - contributed_since
 

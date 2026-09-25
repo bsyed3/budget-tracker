@@ -605,7 +605,9 @@ elif page == "Savings":
             st.rerun()
 
     tfsa_value, tfsa_anchor_date, tfsa_linked_ids = db.get_tfsa_room()
-    tfsa_remaining = analytics.tfsa_room_remaining(df, tfsa_value, tfsa_anchor_date, tfsa_linked_ids)
+    tfsa_remaining = analytics.tfsa_room_remaining(
+        df, tfsa_value, tfsa_anchor_date, tfsa_linked_ids, db.get_tfsa_anchor_txn_id()
+    )
 
     @st.dialog("Edit TFSA Room")
     def edit_tfsa_room_dialog():
