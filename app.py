@@ -232,6 +232,9 @@ elif page == "Overview":
             gbm_months = sorted(gbm["month"].unique())
             gbm_order = [fmt_month(m) for m in gbm_months]
             gbm = gbm.copy()
+            # A month where withdrawals outweigh contributions nets Savings below zero; a stacked
+            # share chart can't show a negative slice (it blew shares past 100%), so floor at 0.
+            gbm["amount"] = gbm["amount"].clip(lower=0)
             gbm["month_label"] = gbm["month"].map(fmt_month)
             gbm["pct"] = gbm.groupby("month")["amount"].transform(lambda x: x / x.sum())
             charts.group_by_month_bar(gbm, x_order=gbm_order, colors=db.GROUP_COLORS, normalize=show_pct)
