@@ -16,6 +16,10 @@ def load_df() -> pd.DataFrame:
     df = pd.DataFrame([dict(r) for r in rows])
     df["date"] = pd.to_datetime(df["date"])
     df["month"] = df["date"].dt.strftime("%Y-%m")
+    # Savings withdrawals are stored as income rows (see db.SAVINGS_WITHDRAWAL_CATEGORY) but are
+    # money moving back out of savings, not earnings -- relabel so every `type == "income"`
+    # filter in the app excludes them automatically, and handle "transfer" explicitly below.
+    df.loc[(df["type"] == "income") & (df["category"] == db.SAVINGS_WITHDRAWAL_CATEGORY), "type"] = "transfer"
     return df
 
 
@@ -53,6 +57,7 @@ def monthly_summary(df: pd.DataFrame, groups: dict[str, str]) -> pd.DataFrame:
     work = df.copy()
     work["group"] = work["category"].map(groups).fillna("Wants")
     income = work[work["type"] == "income"].groupby("month")["amount"].sum()
+    withdrawn = work[work["type"] == "transfer"].groupby("month")["amount"].sum()
     expense_by_group = (
         work[work["type"] == "expense"].groupby(["month", "group"])["amount"].sum().unstack(fill_value=0)
     )
@@ -60,10 +65,13 @@ def monthly_summary(df: pd.DataFrame, groups: dict[str, str]) -> pd.DataFrame:
         if g not in expense_by_group.columns:
             expense_by_group[g] = 0.0
 
-    out = pd.DataFrame(index=sorted(set(income.index) | set(expense_by_group.index)))
+    out = pd.DataFrame(index=sorted(set(income.index) | set(expense_by_group.index) | set(withdrawn.index)))
     out["Total Income"] = income.reindex(out.index, fill_value=0.0)
     for g in db.GROUP_NAMES:
         out[g] = expense_by_group[g].reindex(out.index, fill_value=0.0)
+    # Money taken back out of savings counts against that month's savings (net contributions),
+    # which is also what makes Net Income add it back as cash that was available to spend.
+    out["Savings"] = out["Savings"] - withdrawn.reindex(out.index, fill_value=0.0)
     out["Expenses"] = out["Needs"] + out["Wants"]
     out["Net Income"] = out["Total Income"] - out["Needs"] - out["Wants"] - out["Savings"]
     out = out.sort_index()
@@ -72,20 +80,28 @@ def monthly_summary(df: pd.DataFrame, groups: dict[str, str]) -> pd.DataFrame:
 
 
 def group_breakdown(df: pd.DataFrame, groups: dict[str, str]) -> pd.Series:
-    """Total expense amount per Needs/Wants/Savings group for whatever rows are passed in."""
+    """Total expense amount per Needs/Wants/Savings group for whatever rows are passed in.
+    Savings is net of any withdrawals from savings in those rows (so it can be negative)."""
     expense_df = df[df["type"] == "expense"].copy()
+    withdrawn = df.loc[df["type"] == "transfer", "amount"].sum() if not df.empty else 0.0
     if expense_df.empty:
-        return pd.Series(0.0, index=db.GROUP_NAMES)
-    expense_df["group"] = expense_df["category"].map(groups).fillna("Wants")
-    return expense_df.groupby("group")["amount"].sum().reindex(db.GROUP_NAMES, fill_value=0.0)
+        out = pd.Series(0.0, index=db.GROUP_NAMES)
+    else:
+        expense_df["group"] = expense_df["category"].map(groups).fillna("Wants")
+        out = expense_df.groupby("group")["amount"].sum().reindex(db.GROUP_NAMES, fill_value=0.0)
+    out["Savings"] = out["Savings"] - withdrawn
+    return out
 
 
 def group_breakdown_by_month(df: pd.DataFrame, groups: dict[str, str]) -> pd.DataFrame:
     """Long-format month/group/amount, for a Needs/Wants/Savings-over-time chart."""
-    work = df[df["type"] == "expense"].copy()
+    work = df[df["type"].isin(["expense", "transfer"])].copy()
     if work.empty:
         return pd.DataFrame(columns=["month", "group", "amount"])
     work["group"] = work["category"].map(groups).fillna("Wants")
+    is_withdrawal = work["type"] == "transfer"
+    work.loc[is_withdrawal, "group"] = "Savings"
+    work.loc[is_withdrawal, "amount"] = -work.loc[is_withdrawal, "amount"]
     out = work.groupby(["month", "group"])["amount"].sum().reset_index()
     out.columns = ["month", "group", "amount"]
     return out
@@ -173,12 +189,23 @@ def savings_current_amount(goal_row, df: pd.DataFrame) -> float:
     """A goal's current total balance: its most recent weekly/monthly snapshot if it has ever
     had one recorded, otherwise the pre-snapshot calculation (starting balance + linked
     contribution transactions) so numbers don't suddenly change before snapshots are in use."""
-    latest = db.latest_savings_amount(goal_row["id"])
+    mine = df[df["goal_id"] == goal_row["id"]] if not df.empty else df
+    latest = db.latest_savings_snapshot(goal_row["id"])
     if latest is not None:
-        return latest
+        snap_date, snap_amount = latest
+        # Withdrawals dated after the latest snapshot aren't in it yet. One dated on the
+        # snapshot's own date is assumed to already be reflected (a same-day snapshot is
+        # recorded from the post-withdrawal balance).
+        withdrawn = 0.0
+        if not mine.empty:
+            after = mine[(mine["type"] == "transfer") & (mine["date"] > pd.Timestamp(snap_date))]
+            withdrawn = after["amount"].sum()
+        return snap_amount - withdrawn
     contributed = 0.0
-    if not df.empty:
-        contributed = df.loc[df["goal_id"] == goal_row["id"], "amount"].sum()
+    if not mine.empty:
+        contributed = (
+            mine.loc[mine["type"] != "transfer", "amount"].sum() - mine.loc[mine["type"] == "transfer", "amount"].sum()
+        )
     return goal_row["starting_amount"] + contributed
 
 

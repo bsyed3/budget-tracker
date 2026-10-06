@@ -22,6 +22,12 @@ GROUP_COLORS = {
     "Savings": "#16a34a",    # green
 }
 
+# Money moved OUT of a savings goal back into spending is neither income nor an expense. It's
+# stored as an income-type row (the table only allows income/expense) under this reserved
+# category with the goal attached, and analytics.load_df() relabels it type "transfer" so it
+# never lands in income totals. This name is intentionally not a row in the categories table.
+SAVINGS_WITHDRAWAL_CATEGORY = "Savings Withdrawal"
+
 # Distinct, colorblind-friendlyish qualitative palette for an arbitrary number of savings goals
 # on the same chart (cycles if there are ever more goals than colors).
 GOAL_PALETTE = [
@@ -508,6 +514,8 @@ def init_db() -> None:
             if row["category"] in seen_categories:
                 continue
             seen_categories.add(row["category"])
+            if row["category"] == SAVINGS_WITHDRAWAL_CATEGORY:
+                continue
             if row["category"] not in known:
                 group = "Wants" if row["type"] == "expense" else None
                 conn.execute(
@@ -824,15 +832,22 @@ def get_goal_snapshots(goal_id: int, period_type: str) -> list:
         ).fetchall()
 
 
-def latest_savings_amount(goal_id: int) -> float | None:
-    """The most recent snapshot for this goal across both weekly and monthly, or None if it has
-    never had one recorded (callers should fall back to the pre-snapshot calculation)."""
+def latest_savings_snapshot(goal_id: int) -> tuple[str, float] | None:
+    """(period_date, amount) of the most recent snapshot for this goal across both weekly and
+    monthly, or None if it has never had one recorded (callers should fall back to the
+    pre-snapshot calculation)."""
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT amount FROM savings_snapshots WHERE goal_id = ? ORDER BY period_date DESC LIMIT 1",
+            "SELECT period_date, amount FROM savings_snapshots WHERE goal_id = ? "
+            "ORDER BY period_date DESC LIMIT 1",
             (goal_id,),
         ).fetchone()
-    return row["amount"] if row else None
+    return (row["period_date"], row["amount"]) if row else None
+
+
+def add_savings_withdrawal(goal_id: int, date: str, amount: float, description: str) -> int:
+    """Record money taken out of a savings goal -- see SAVINGS_WITHDRAWAL_CATEGORY."""
+    return add_transaction(date, "income", SAVINGS_WITHDRAWAL_CATEGORY, description, amount, goal_id)
 
 
 # --------------------------------------------------------------------- settings

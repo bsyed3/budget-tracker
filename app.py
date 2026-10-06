@@ -604,6 +604,32 @@ elif page == "Savings":
             st.success("Snapshot saved.")
             st.rerun()
 
+    @st.dialog("Withdraw from Savings")
+    def withdraw_dialog():
+        st.caption(
+            "Moves money out of a savings goal. It isn't counted as income (you already earned it) "
+            "-- it lowers that month's savings and the goal's balance, and leaves your TFSA room "
+            "alone. If you spent it, log that purchase separately as a normal expense."
+        )
+        choice = st.selectbox("From goal", [g["name"] for g in goals], key="wd_goal")
+        goal = next(g for g in goals if g["name"] == choice)
+        balance = analytics.savings_current_amount(goal, df)
+        st.caption(f"Current balance: {money(balance)}")
+        wd_date = st.date_input("Date", value=dt.date.today(), key="wd_date")
+        amount = st.number_input("Amount", min_value=0.0, step=10.0, format="%.2f", key="wd_amt")
+        description = st.text_input("Description (optional)", placeholder="e.g. Car repair, credit card", key="wd_desc")
+        if st.button("Withdraw", type="primary", key="wd_submit"):
+            if amount <= 0:
+                st.error("Amount must be greater than zero.")
+            elif amount > balance:
+                st.error(f"That's more than {goal['name']}'s current balance ({money(balance)}).")
+            else:
+                db.add_savings_withdrawal(
+                    goal["id"], wd_date.isoformat(), amount,
+                    description.strip() or f"Withdrawal from {goal['name']}",
+                )
+                st.rerun()
+
     tfsa_value, tfsa_anchor_date, tfsa_linked_ids = db.get_tfsa_room()
     tfsa_remaining = analytics.tfsa_room_remaining(
         df, tfsa_value, tfsa_anchor_date, tfsa_linked_ids, db.get_tfsa_anchor_txn_id()
@@ -668,11 +694,13 @@ elif page == "Savings":
                             delete_goal_dialog(g)
         st.divider()
 
-    gbtn1, gbtn2 = st.columns(2)
+    gbtn1, gbtn2, gbtn3 = st.columns(3)
     if gbtn1.button("+ Add goal"):
         add_goal_dialog()
     if goals and gbtn2.button("Record/Edit Snapshot"):
         record_snapshot_dialog()
+    if goals and gbtn3.button("Withdraw from savings"):
+        withdraw_dialog()
 
     st.divider()
     st.subheader("Savings Balance Over Time")
@@ -739,6 +767,23 @@ elif page == "Transactions":
     @st.dialog("Edit Transaction")
     def edit_transaction_dialog(txn):
         tid = int(txn["id"])
+        if txn["type"] == "transfer":
+            st.caption("Savings withdrawal -- not counted as income or an expense.")
+            t_date = st.date_input("Date", value=txn["date"].date(), key=f"dlg_edit_date_{tid}")
+            t_desc = st.text_input("Description", value=txn["description"] or "", key=f"dlg_edit_desc_{tid}")
+            t_amount = st.number_input(
+                "Amount", min_value=0.0, step=1.0, value=float(txn["amount"]), format="%.2f", key=f"dlg_edit_amt_{tid}"
+            )
+            if st.button("Save changes", type="primary", key=f"dlg_edit_submit_{tid}"):
+                if t_amount <= 0:
+                    st.error("Amount must be greater than zero.")
+                else:
+                    t_goal = None if pd.isna(txn["goal_id"]) else int(txn["goal_id"])
+                    db.update_transaction(
+                        tid, t_date.isoformat(), "income", db.SAVINGS_WITHDRAWAL_CATEGORY, t_desc, t_amount, t_goal
+                    )
+                    st.rerun()
+            return
         type_ = st.radio(
             "Type", ["expense", "income"], horizontal=True, format_func=str.capitalize,
             index=0 if txn["type"] == "expense" else 1, key=f"dlg_edit_type_{tid}",
@@ -788,7 +833,7 @@ elif page == "Transactions":
         st.info("No transactions yet.")
     else:
         f1, f2, f3 = st.columns([1, 1.4, 1.6])
-        type_choice = f1.radio("Type", ["All", "Income", "Expense"], horizontal=True)
+        type_choice = f1.radio("Type", ["All", "Income", "Expense", "Transfer"], horizontal=True)
         min_date, max_date = df["date"].min().date(), df["date"].max().date()
         date_range = f2.date_input("Date Range", value=(min_date, max_date), min_value=min_date, max_value=max_date)
         search = f3.text_input("Search category or description")
