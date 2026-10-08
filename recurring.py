@@ -58,20 +58,20 @@ def monthly_amount(amount: float, interval: int, unit: str) -> float:
 
 
 def monthly_totals(rules: list, savings_categories: set[str]) -> dict[str, float]:
-    """Per-month totals across active rules: income, expenses (all of it, savings transfers
-    included), and how much of those expenses is savings transfers."""
-    income = expenses = to_savings = 0.0
+    """Per-month totals across active rules: income, bills (expenses that aren't transfers to
+    savings), and savings (the transfers to savings)."""
+    income = bills = to_savings = 0.0
     for r in rules:
         if not r["active"]:
             continue
         m = monthly_amount(r["amount"], r["frequency_interval"], r["frequency_unit"])
         if r["type"] == "income":
             income += m
+        elif r["category"] in savings_categories:
+            to_savings += m
         else:
-            expenses += m
-            if r["category"] in savings_categories:
-                to_savings += m
-    return {"income": income, "expenses": expenses, "to_savings": to_savings}
+            bills += m
+    return {"income": income, "bills": bills, "savings": to_savings}
 
 
 def generate_due_transactions(today: dt.date | None = None) -> int:

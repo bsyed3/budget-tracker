@@ -954,13 +954,14 @@ elif page == "Recurring Transactions":
     rules = db.get_recurring_rules()
 
     rec_totals = recurring.monthly_totals(rules, {c for c, g in groups.items() if g == "Savings"})
-    m1, m2, m3 = st.columns(3)
+    m1, m2, m3, m4 = st.columns(4)
     m1.metric("Monthly income", f"${rec_totals['income']:,.2f}")
-    m2.metric("Monthly expenses", f"${rec_totals['expenses']:,.2f}")
-    m3.metric("Net per month", f"${rec_totals['income'] - rec_totals['expenses']:,.2f}")
+    m2.metric("Monthly bills", f"${rec_totals['bills']:,.2f}")
+    m3.metric("Monthly savings", f"${rec_totals['savings']:,.2f}")
+    m4.metric("Left over", f"${rec_totals['income'] - rec_totals['bills'] - rec_totals['savings']:,.2f}")
     st.caption(
-        f"Active rules only, converted to a per-month amount (weekly and daily rules use the average "
-        f"month length). Expenses include ${rec_totals['to_savings']:,.2f}/month of transfers to savings."
+        "Active rules only, converted to a per-month amount (weekly and daily rules use the average "
+        "month length). Bills are recurring expenses; savings are recurring transfers to savings."
     )
 
     @st.dialog("Add a Recurring Transaction")
