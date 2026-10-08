@@ -42,6 +42,38 @@ def next_occurrence(d: dt.date, interval: int, unit: str) -> dt.date:
     raise ValueError(f"Unknown frequency unit: {unit}")
 
 
+_DAYS_PER_MONTH = 365.25 / 12
+
+
+def monthly_amount(amount: float, interval: int, unit: str) -> float:
+    """What one rule works out to per month: a monthly rule is amount / interval, a weekly one
+    uses the average month length (so "every week" is ~4.35 occurrences, not a flat 4)."""
+    if unit == "month":
+        return amount / interval
+    if unit == "week":
+        return amount * (_DAYS_PER_MONTH / 7) / interval
+    if unit == "day":
+        return amount * _DAYS_PER_MONTH / interval
+    raise ValueError(f"Unknown frequency unit: {unit}")
+
+
+def monthly_totals(rules: list, savings_categories: set[str]) -> dict[str, float]:
+    """Per-month totals across active rules: income, expenses (all of it, savings transfers
+    included), and how much of those expenses is savings transfers."""
+    income = expenses = to_savings = 0.0
+    for r in rules:
+        if not r["active"]:
+            continue
+        m = monthly_amount(r["amount"], r["frequency_interval"], r["frequency_unit"])
+        if r["type"] == "income":
+            income += m
+        else:
+            expenses += m
+            if r["category"] in savings_categories:
+                to_savings += m
+    return {"income": income, "expenses": expenses, "to_savings": to_savings}
+
+
 def generate_due_transactions(today: dt.date | None = None) -> int:
     """Create a transaction for every rule occurrence up through today. Returns count created.
 

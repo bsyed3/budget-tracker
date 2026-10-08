@@ -1,6 +1,7 @@
 """Pandas helpers that turn raw transaction rows into the views the app needs."""
 from __future__ import annotations
 
+import calendar
 import datetime as dt
 
 import pandas as pd
@@ -21,6 +22,25 @@ def load_df() -> pd.DataFrame:
     # filter in the app excludes them automatically, and handle "transfer" explicitly below.
     df.loc[(df["type"] == "income") & (df["category"] == db.SAVINGS_WITHDRAWAL_CATEGORY), "type"] = "transfer"
     return df
+
+
+def _add_months(d: dt.date, n: int) -> dt.date:
+    total = d.year * 12 + (d.month - 1) + n
+    year, month0 = divmod(total, 12)
+    return dt.date(year, month0 + 1, min(d.day, calendar.monthrange(year, month0 + 1)[1]))
+
+
+def months_elapsed(start: dt.date, end: dt.date) -> float:
+    """Whole months from start to end plus the leftover days as a fraction of the month they fall
+    in -- June 1 to Oct 8 is 4 months + 7 days = 4 + 7/31."""
+    if end <= start:
+        return 0.0
+    m = (end.year - start.year) * 12 + (end.month - start.month)
+    if _add_months(start, m) > end:
+        m -= 1
+    anchor = _add_months(start, m)
+    next_anchor = _add_months(start, m + 1)
+    return m + (end - anchor).days / (next_anchor - anchor).days
 
 
 def all_months(df: pd.DataFrame, pad_current: bool = True) -> list[str]:

@@ -305,6 +305,8 @@ elif page == "Overview":
 # ======================================================================= Breakdown
 elif page == "Breakdown":
     view_mode = st.radio("View by", ["Month", "Year"], horizontal=True)
+    avg_mode = False
+    divisor = 1.0  # months to divide by when showing a Year as a monthly average
 
     if view_mode == "Month":
         months = analytics.all_months(df)
@@ -319,15 +321,29 @@ elif page == "Breakdown":
         selected_year = st.selectbox("Year", years, index=default_year_index)
         scope_df = df[df["date"].dt.year == selected_year] if not df.empty else df
         period_label = str(selected_year)
+        avg_mode = st.radio("Show", ["Totals", "Monthly average"], horizontal=True, key="year_avg_mode") == "Monthly average"
+        if avg_mode:
+            today_d = dt.date.today()
+            first_d = df["date"].min().date() if not df.empty else dt.date(selected_year, 1, 1)
+            span_start = max(dt.date(selected_year, 1, 1), first_d)
+            span_end = today_d if selected_year == today_d.year else dt.date(selected_year + 1, 1, 1)
+            n_months = analytics.months_elapsed(span_start, span_end)
+            if n_months > 0:
+                divisor = n_months
+            st.caption(
+                f"Monthly averages over {n_months:.2f} months ({span_start:%b} {span_start.day} to "
+                f"{span_end:%b} {span_end.day}), counting the current partial month as a fraction."
+            )
 
-    income_total = scope_df.loc[scope_df["type"] == "income", "amount"].sum()
-    breakdown = analytics.group_breakdown(scope_df, groups)
+    per = " / month" if avg_mode else ""
+    income_total = scope_df.loc[scope_df["type"] == "income", "amount"].sum() / divisor
+    breakdown = analytics.group_breakdown(scope_df, groups) / divisor
     expenses = breakdown["Needs"] + breakdown["Wants"]
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Income", f"${income_total:,.2f}")
-    c2.metric("Expenses", f"${expenses:,.2f}")
-    c3.metric("To Savings", f"${breakdown['Savings']:,.2f}")
+    c1.metric(f"Income{per}", f"${income_total:,.2f}")
+    c2.metric(f"Expenses{per}", f"${expenses:,.2f}")
+    c3.metric(f"To Savings{per}", f"${breakdown['Savings']:,.2f}")
 
     st.divider()
     st.subheader("Needs / Wants / Savings")
@@ -374,7 +390,7 @@ elif page == "Breakdown":
     if expense_df.empty:
         st.info("No expenses this period.")
     else:
-        by_cat = expense_df.groupby("category")["amount"].sum().sort_values(ascending=False)
+        by_cat = expense_df.groupby("category")["amount"].sum().sort_values(ascending=False) / divisor
         if spending_view == "By category":
             st.caption(
                 "Excludes Savings contributions. Categories are colored by group (Transportation, "
@@ -397,7 +413,7 @@ elif page == "Breakdown":
     if income_df.empty:
         st.info("No income this period.")
     else:
-        by_cat_income = income_df.groupby("category")["amount"].sum().sort_values(ascending=False)
+        by_cat_income = income_df.groupby("category")["amount"].sum().sort_values(ascending=False) / divisor
         charts.category_pie(by_cat_income, db.GOAL_PALETTE, group_small=False)
 
     st.divider()
@@ -936,6 +952,16 @@ elif page == "Recurring Transactions":
         "stay as-is (edit those individually on the Transactions page)."
     )
     rules = db.get_recurring_rules()
+
+    rec_totals = recurring.monthly_totals(rules, {c for c, g in groups.items() if g == "Savings"})
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Monthly income", f"${rec_totals['income']:,.2f}")
+    m2.metric("Monthly expenses", f"${rec_totals['expenses']:,.2f}")
+    m3.metric("Net per month", f"${rec_totals['income'] - rec_totals['expenses']:,.2f}")
+    st.caption(
+        f"Active rules only, converted to a per-month amount (weekly and daily rules use the average "
+        f"month length). Expenses include ${rec_totals['to_savings']:,.2f}/month of transfers to savings."
+    )
 
     @st.dialog("Add a Recurring Transaction")
     def add_recurring_dialog():
